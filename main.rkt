@@ -24,6 +24,7 @@
 (define total-session-cost 0.0)
 
 (define current-security-level (make-parameter 1))
+(define priority-param (make-parameter (or (getenv "PRIORITY") "best")))
 
 (define ACP-MODES
   (list (hash 'slug "ask" 'name "Ask" 'description "Read only.")
@@ -104,12 +105,17 @@
               (define gen (make-openai-image-generator #:api-key api-key #:api-base (base-url-param)))
               (define-values (ok? url) (gen (hash-ref args 'prompt)))
               (if ok? (format "Generated Image: ~a" url) (format "Failed: ~a" url))]
+            ["set_priority" 
+             (define p (hash-ref args 'priority))
+             (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol p)])))))
+             (format "Priority set to ~a." p)]
             [_ (format "Unknown: ~a" name)]
              )])))
 
 (define (get-tools mode)
   (define mem-tools (list (hash 'type "function" 'function (hash 'name "memory_save" 'parameters (hash 'type "object" 'properties (hash 'text (hash 'type "string")))))
-                          (hash 'type "function" 'function (hash 'name "memory_recall" 'parameters (hash 'type "object" 'properties (hash 'query (hash 'type "string")))))))
+                          (hash 'type "function" 'function (hash 'name "memory_recall" 'parameters (hash 'type "object" 'properties (hash 'query (hash 'type "string")))))
+                          (hash 'type "function" 'function (hash 'name "set_priority" 'description "Set the agent's performance profile (best, cheap, fast, verbose). Use this if you want to optimize for speed or cost based on the task." 'parameters (hash 'type "object" 'properties (hash 'priority (hash 'type "string" 'enum '("best" "cheap" "fast" "verbose"))))))))
   
   (define base (list (hash 'type "function" 'function (hash 'name "ask_human" 'parameters (hash 'type "object" 'properties (hash 'question (hash 'type "string")))))
                      (hash 'type "function" 'function (hash 'name "ctx_evolve" 'parameters (hash 'type "object" 'properties (hash 'feedback (hash 'type "string") 'model (hash 'type "string")))))
@@ -272,6 +278,9 @@
            ["model" (model-param (second parts)) (printf "Model set to ~a\n" (second parts))]
            ["judge-model" (llm-judge-model-param (second parts)) (printf "Judge Model set to ~a\n" (second parts))]
            ["budget" (budget-param (string->number (second parts))) (printf "Budget set to ~a\n" (second parts))]
+           ["priority" 
+            (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol (second parts))])))))
+            (printf "Priority set to ~a\n" (second parts))]
            [_ (printf "Unknown config key: ~a\n" (first parts))])
          (displayln "Usage: /config <key> <value>"))]
 
@@ -400,6 +409,7 @@ EOF
                                [(equal? level "verbose") (current-debug-level 2)]
                                [val (current-debug-level val)]
                                [else (current-debug-level 1)]))]
+              [("-p" "--priority") p "Set Runtime Priority (best, cheap, fast, verbose)" (priority-param p)]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
               #:args raw-args
               (match (mode-param)
@@ -410,7 +420,7 @@ EOF
                           (begin
                              (verify-env! #:fail #t)
                              (let ([task (string-join raw-args " ")])
-                               (handle-new-session "cli" "code") 
+                               (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [mode 'code] [priority (string->symbol (priority-param))])))))
                                (cond
                                  [(equal? (pretty-param) "glow")
                                   ;; Pipe to glow
