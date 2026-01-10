@@ -1,0 +1,1 @@
+("9.0" ta6le ("f39389ad801de3b34fad6c55574e1dbe4fa64549" . "a3644efd9a3b7157e6e5918771c298f9370fc5b4") (collects #"chrysalis-forge" #"dspy-core.rkt") (collects #"chrysalis-forge" #"optimizer-meta.rkt") (collects #"racket" #"list.rkt") (collects #"racket" #"main.rkt") (collects #"racket" #"runtime-config.rkt") (collects #"racket" #"string.rkt"))

@@ -1,0 +1,1 @@
+("9.0" ta6le ("ec269b5049d811b3a32bedce10d8eb84f9cae7a6" . "4985ee5ec8532f051228bcfc847ca105b7015942") (collects #"chrysalis-forge" #"rdf-store.rkt") (collects #"json" #"main.rkt") (collects #"racket" #"base.rkt") (collects #"racket" #"runtime-config.rkt"))

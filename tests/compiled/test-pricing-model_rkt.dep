@@ -1,0 +1,1 @@
+("9.0" ta6le ("413f01d3d7f485308e4b86dcc0654da055d88cea" . "61617353ce31d061904bd1c500a48b0267788d64") (collects #"chrysalis-forge" #"pricing-model.rkt") (collects #"racket" #"base.rkt") (collects #"racket" #"runtime-config.rkt") (collects #"rackunit" #"main.rkt") (collects #"rackunit" #"text-ui.rkt"))

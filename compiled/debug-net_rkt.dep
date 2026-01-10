@@ -1,0 +1,1 @@
+("9.0" ta6le ("3c3b8215bea16d70fa0148d77bbf0fb34b85a571" . "e9ea9c58969e50ed03f55e1c8035196445af1d8c") (collects #"json" #"main.rkt") (collects #"net" #"http-client.rkt") (collects #"net" #"url.rkt") (collects #"racket" #"base.rkt") (collects #"racket" #"list.rkt") (collects #"racket" #"port.rkt") (collects #"racket" #"runtime-config.rkt"))
