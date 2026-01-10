@@ -1,6 +1,6 @@
 #lang racket/base
 (require rackunit
-         "../utils-retry.rkt")
+         "../src/utils/utils-retry.rkt")
 
 (provide utils-retry-tests)
 

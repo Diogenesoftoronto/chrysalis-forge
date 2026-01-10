@@ -1,5 +1,5 @@
 #lang racket
-(require rackunit "../context-store.rkt" racket/file json)
+(require rackunit "../src/stores/context-store.rkt" racket/file json)
 
 ;; Setup test environment
 (define test-home (build-path (current-directory) "test-env"))

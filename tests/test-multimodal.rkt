@@ -1,5 +1,5 @@
 #lang racket
-(require rackunit "../openai-client.rkt" "../dspy-core.rkt" net/url json)
+(require rackunit "../src/llm/openai-client.rkt" "../src/llm/dspy-core.rkt" net/url json)
 
 ;; Mock Sender
 (define (mock-sender prompt)
@@ -18,7 +18,7 @@
 
 (test-case "DSPy - Multimodal Prompt"
   (define m (Predict (signature Test (in [app string?] [image string?]) (out [result string?]))))
-  (define context (ctx #:system "System" #:memory "" #:tool-hints "" #:mode 'ask))
+  (define context (ctx #:system "System" #:memory "" #:tool-hints "" #:mode 'ask #:priority 'best))
   
   ;; Text only
   (define inputs-text (hash 'app "MyApp" 'image "No Image"))

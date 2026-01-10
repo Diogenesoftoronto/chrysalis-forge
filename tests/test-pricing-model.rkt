@@ -1,6 +1,6 @@
 #lang racket/base
 (require rackunit
-         "../pricing-model.rkt")
+         "../src/llm/pricing-model.rkt")
 
 (provide pricing-model-tests)
 

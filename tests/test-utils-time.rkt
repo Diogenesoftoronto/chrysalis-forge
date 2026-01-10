@@ -1,6 +1,6 @@
 #lang racket/base
 (require rackunit
-         "../utils-time.rkt")
+         "../src/utils/utils-time.rkt")
 
 (provide utils-time-tests)
 

@@ -10,6 +10,8 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 
 - **Evolvable Context**: Self-optimizing system prompts via GEPA (General Evolvable Prompting Architecture)
 - **DSPy-style DSL**: Signatures, Modules (Predict, ChainOfThought), and Optimizers
+- **MAP-Elites Optimization**: Evolutionary optimization targeting cost, latency, and token efficiency
+- **Grounded Scoring**: Automated grading based on precision, speed ($/ms), and resource consumption
 - **Tiered Sandboxing**: Four levels of security isolation for code execution
 - **25 Built-in Tools**: File operations, code search, git, jj (Jujutsu), and self-evolution
 - **Parallel Sub-Agents**: Spawn concurrent tasks with specialized tool profiles
@@ -68,6 +70,7 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 | `evolve_system` | Trigger GEPA to improve prompts |
 | `log_feedback` | Log task results for learning |
 | `generate_tests` | LLM-powered test generation |
+| `set_priority` | Autonomously switch performance profile (`fast`, `cheap`, etc.) |
 
 ### Web Search Tools (`web-search.rkt`)
 | Tool | Description |
@@ -103,6 +106,7 @@ racket main.rkt --level-1 "Analyze this code"
 ### Configuration
 - `--model <name>`: Override model (default: gpt-5.2)
 - `--base-url <url>`: Custom API endpoint (LiteLLM, Ollama, etc.)
+- `--priority <p>`: Set execution profile (`best`, `cheap`, `fast`, `verbose`)
 - `--budget <usd>`: Session budget limit
 - `--timeout <duration>`: Session time limit
 
@@ -124,6 +128,36 @@ The agent learns and improves through:
 3. **Profile Learning**: Tracks which tool profiles succeed per task type
 4. **Eval Store**: Logs all task results for analysis
 
+## MAP-Elites Optimization
+ 
+ The agent utilizes a specialized **MAP-Elites** evolutionary loop to maintain a library of diverse, high-performing instruction candidates:
+ 
+ - **Behavioral Binning**: Candidates are categorized into "niches" based on Latency, Cost, and Token Usage.
+ - **Grounded Scoring**: Optimization is driven by precise telemetry:
+   - **Accuracy**: Primary reward for correct output.
+   - **Latency Penalty**: Deductions for slow response times.
+   - **Cost Penalty**: Deductions based on real-world token pricing.
+ - **Dynamic Elite Selection**: At runtime, you or the agent can switch between candidates via the `/config priority` command or the `set_priority` tool.
+
+## Natural Language Priority Selection
+
+One of the most powerful features is the ability to select agent "personalities" using **natural language**:
+
+```bash
+# Use keyword shortcuts
+racket main.rkt --priority fast "Summarize this file"
+racket main.rkt --priority cheap "Analyze this code"
+
+# Or describe what you need in plain English
+racket main.rkt --priority "I'm broke but need precision" "Review this PR"
+racket main.rkt --priority "I'm in a hurry" "Quick summary"
+```
+
+The system uses **K-Nearest Neighbor search** in a geometric phenotype space to find the elite agent that best matches your stated priorities. Keywords like `fast`, `cheap`, `accurate`, and `concise` are mapped directly; other phrases are interpreted by the LLM to find the optimal trade-off.
+
+The agent can also **set its own priority** mid-task using the `set_priority` tool if it determines that a task requires a different speed/cost profile.
+ 
 ## License
 
 GPL-3.0
+

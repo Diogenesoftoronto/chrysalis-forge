@@ -7,7 +7,14 @@
 (struct Module (id sig strategy instructions demos params) #:transparent)
 (struct Ctx (system memory tool-hints mode priority history compacted-summary) #:transparent)
 (struct RunResult (ok? outputs raw prompt meta) #:transparent)
-(struct ModuleArchive (id sig archive default-id) #:transparent)
+
+;; Phenotype: Continuous coordinates for geometric space
+(struct Phenotype (accuracy latency cost usage) #:transparent)
+
+;; ModuleArchive: Contains both discrete bins and geometric point cloud
+;; - archive: hash of (bin-key -> (cons score module)) for evolution
+;; - point-cloud: list of (cons phenotype module) for KNN search
+(struct ModuleArchive (id sig archive point-cloud default-id) #:transparent)
 
 (define-syntax (signature stx)
   (define (parse-fields fs-stx)
@@ -70,21 +77,49 @@
    text-prompt)
 
 (define (try-parse-json s) (with-handlers ([exn:fail? (λ (_) #f)]) (string->jsexpr s)))
+
+;; Dynamic import for selector to avoid circular dependency
+(define select-elite-fn #f)
+(define text->vector-fn #f)
+(define (ensure-selector!)
+  (unless select-elite-fn
+    (define selector (dynamic-require "dspy-selector.rkt" #f))
+    (set! select-elite-fn (dynamic-require "dspy-selector.rkt" 'select-elite))
+    (set! text->vector-fn (dynamic-require "dspy-selector.rkt" 'text->vector))))
+
 (define (run-module m ctx inputs send! #:trace [tr #f] #:cache? [cache? #t])
   (define target-m 
     (cond
       [(Module? m) m]
       [(ModuleArchive? m)
-       (define prio (Ctx-priority ctx)) ;; 'cheap, 'fast, 'verbose, or 'best
+       (define prio (Ctx-priority ctx))
        (define arch (ModuleArchive-archive m))
-       ;; Try to find a bin matching the priority, otherwise fallback to absolute best
-       (define matching-key 
-         (for/first ([(k v) (in-hash arch)]
-                     #:when (member prio k))
-           k))
-       (if matching-key 
-           (cdr (hash-ref arch matching-key))
-           (cdr (hash-ref arch (ModuleArchive-default-id m))))]
+       (define cloud (ModuleArchive-point-cloud m))
+       
+       (cond
+         ;; Symbol priority: use keyword mapping for backwards compatibility
+         [(and (symbol? prio) (member prio '(cheap fast compact verbose)))
+          (define matching-key 
+            (for/first ([(k v) (in-hash arch)]
+                        #:when (member prio k))
+              k))
+          (if matching-key 
+              (cdr (hash-ref arch matching-key))
+              (cdr (hash-ref arch (ModuleArchive-default-id m))))]
+         
+         ;; Symbol 'best: use the absolute best from archive
+         [(equal? prio 'best)
+          (cdr (hash-ref arch (ModuleArchive-default-id m)))]
+         
+         ;; String priority: use geometric KNN selection
+         [(and (string? prio) (not (null? cloud)))
+          (ensure-selector!)
+          (define target-vec (text->vector-fn prio send!))
+          (select-elite-fn m target-vec)]
+         
+         ;; Fallback
+         [else (cdr (hash-ref arch (ModuleArchive-default-id m)))])]
+      
       [else (error "Invalid module type")]))
 
   ;; Enhanced run-module to look for images in inputs

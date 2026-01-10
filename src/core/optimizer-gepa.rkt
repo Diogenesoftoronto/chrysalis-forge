@@ -1,6 +1,6 @@
 #lang racket/base
 (provide gepa-evolve! gepa-meta-evolve!)
-(require "../stores/context-store.rkt" "../llm/openai-client.rkt" json racket/file "../llm/dspy-core.rkt" "../llm/pricing-model.rkt" "../utils/debug.rkt")
+(require "../stores/context-store.rkt" "../llm/openai-client.rkt" json racket/file racket/list "../llm/dspy-core.rkt" "../llm/pricing-model.rkt" "../utils/debug.rkt")
 
 (define META-PATH (build-path (find-system-path 'home-dir) ".agentd" "meta_prompt.txt"))
 

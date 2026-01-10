@@ -221,13 +221,14 @@
                                                              'model (hash 'type "string" 'description "Optional: model to use (e.g. 'gpt-5.2', 'o1-preview'). Defaults to 'gpt-5.2'."))
                                            'required '("content" "criteria"))))
    ;; Dynamic MCP tools
-   (for/list ([client (in-hash-values mcp-clients)]
-              #:when #t
-              [t (mcp-client-tools client)])
-     (hash 'type "function"
-           'function (hash 'name (hash-ref t 'name)
-                           'description (hash-ref t 'description "")
-                           'parameters (hash-ref t 'inputSchema (hash 'type "object" 'properties (hash))))))))
+   (flatten
+    (for/list ([client (in-hash-values mcp-clients)]
+               #:when #t
+               [t (mcp-client-tools client)])
+      (hash 'type "function"
+            'function (hash 'name (hash-ref t 'name)
+                            'description (hash-ref t 'description "")
+                            'parameters (hash-ref t 'inputSchema (hash 'type "object" 'properties (hash))))))))))
 
 ;; Execute a tool by name
 (define (execute-acp-tool name args security-level)

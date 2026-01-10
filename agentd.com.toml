@@ -1,0 +1,71 @@
+# Schema defined in agent_schema.py
+# Chrysalis Forge - Evolvable Racket Agent Framework
+
+identity = "chrysalis-forge.agentd"
+name = "Chrysalis Forge (agentd)"
+short_name = "agentd"
+url = "https://github.com/diogenes/chrysalis-forge"
+protocol = "acp"
+author_name = "Diogenes"
+author_url = "https://github.com/diogenes"
+publisher_name = "Diogenes"
+publisher_url = "https://github.com/diogenes"
+type = "coding"
+description = "Self-evolving Racket agent with MAP-Elites optimization, natural language priority selection, and tiered security sandboxing."
+tags = ["racket", "self-evolving", "map-elites", "dspy", "agentic"]
+run_command."*" = "racket /home/diogenes/Projects/chrysalis-forge/main.rkt --acp"
+
+help = '''
+# Chrysalis Forge (agentd)
+
+An evolvable, safety-gated Racket agent framework with DSPy-style optimization and self-improving capabilities.
+
+## Key Features
+
+- **MAP-Elites Optimization**: Evolutionary prompt tuning across cost, latency, and token efficiency
+- **Natural Language Priority**: Select agent "personalities" with plain English (e.g., `--priority "I need accuracy"`)
+- **Grounded Scoring**: Automated grading based on precision, speed, and resource consumption
+- **Tiered Sandboxing**: Four levels of security isolation (0-3 + god mode)
+- **Self-Evolution**: GEPA and Meta-GEPA continuously improve system prompts
+- **25+ Built-in Tools**: File ops, git, jj (Jujutsu), web search, vector memory, RDF graphs
+
+## Prerequisites
+
+- Racket v9.0+ (ensure `/usr/local/racket/bin` is in PATH)
+- OpenAI API Key (`OPENAI_API_KEY` environment variable)
+- Optional: `EXA_API_KEY` for enhanced web search
+
+## Usage Examples
+
+```bash
+# Interactive mode
+racket main.rkt -i
+
+# CLI with natural language priority
+racket main.rkt --priority "cheap and fast" "Summarize this file"
+racket main.rkt --priority accurate "Review this code for security issues"
+
+# Security levels
+racket main.rkt --perms god "Full access mode"
+```
+
+---
+
+**Repository**: https://github.com/diogenes/chrysalis-forge
+'''
+
+[actions."*".install]
+command = "git clone https://github.com/diogenes/chrysalis-forge.git && cd chrysalis-forge && raco pkg install --auto"
+description = "Clone and install Chrysalis Forge"
+
+[actions."*".setup_env]
+command = "cp .env.example .env && echo 'Edit .env to add your OPENAI_API_KEY'"
+description = "Create environment file from template"
+
+[actions."*".interactive]
+command = "racket main.rkt -i"
+description = "Start interactive REPL mode"
+
+[actions."*".init_project]
+command = "racket main.rkt /init"
+description = "Initialize agents.md for current project"

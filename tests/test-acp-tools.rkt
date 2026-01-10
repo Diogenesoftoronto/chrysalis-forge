@@ -1,6 +1,6 @@
 #lang racket/base
 (require rackunit
-         "../acp-tools.rkt")
+         "../src/tools/acp-tools.rkt")
 
 (provide acp-tools-tests)
 

@@ -25,6 +25,7 @@
 
 (define current-security-level (make-parameter 1))
 (define priority-param (make-parameter (or (getenv "PRIORITY") "best")))
+(define acp-port-param (make-parameter (or (getenv "ACP_PORT") "stdio")))
 
 (define ACP-MODES
   (list (hash 'slug "ask" 'name "Ask" 'description "Read only.")
@@ -128,12 +129,14 @@
                      (hash 'type "function" 'function (hash 'name "generate_image" 'parameters (hash 'type "object" 'properties (hash 'prompt (hash 'type "string")))))))
   (define fs (make-acp-tools))
   (define term (list (hash 'type "function" 'function (hash 'name "run_term" 'parameters (hash 'type "object" 'properties (hash 'cmd (hash 'type "string")))))))
-  (define tools (match mode
+  (define tools-raw (match mode
     ['ask base]
     ['architect (append base (list (first fs)))] ; read only
     ['code (append base fs term (get-supervisor-tools) (make-rdf-tools) (make-web-search-tools) mem-tools)]
     ['semantic (append base (make-rdf-tools) mem-tools)]
     [_ base]))
+  ;; Filter out any invalid entries (empty lists or non-hashes)
+  (define tools (filter (λ (t) (and (hash? t) (hash-has-key? t 'function))) tools-raw))
   (log-debug/once 1 'tools "Available tools: ~a" (map (λ (t) (hash-ref (hash-ref t 'function) 'name)) tools))
   tools)
 (define CONTEXT-LIMIT-TOKENS (make-parameter 100000)) ;; Configurable context limit
@@ -393,7 +396,8 @@ EOF
 (define mode-param (make-parameter 'run))
 (command-line #:program "agentd" 
               #:once-each 
-              [("--acp") "Run ACP" (mode-param 'acp)]
+              [("--acp") "Run ACP Server" (mode-param 'acp)]
+              [("--acp-port") port "ACP Port (default: stdio)" (acp-port-param port)]
               [("--perms") p "Security Level (0, 1, 2, 3, god)"
                            (match p
                              ["0" (current-security-level 0)]
@@ -409,7 +413,7 @@ EOF
                                [(equal? level "verbose") (current-debug-level 2)]
                                [val (current-debug-level val)]
                                [else (current-debug-level 1)]))]
-              [("-p" "--priority") p "Set Runtime Priority (best, cheap, fast, verbose)" (priority-param p)]
+              [("-p" "--priority") p "Set Runtime Priority (e.g., 'fast', 'cheap', or 'I need accuracy')" (priority-param p)]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
               #:args raw-args
               (match (mode-param)
@@ -431,4 +435,14 @@ EOF
                                   (subprocess-wait sp)]
                                  [else
                                   (acp-run-turn "cli" task (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))])))))]
-                ['acp (acp-serve #:modes ACP-MODES #:on-new-session handle-new-session #:run-turn acp-run-turn)]))
+                ['acp 
+                 (eprintf "~n====================================~n")
+                 (eprintf "Chrysalis Forge ACP Server~n")
+                 (eprintf "====================================~n")
+                 (eprintf "Transport: ~a~n" (acp-port-param))
+                 (eprintf "Model: ~a~n" (model-param))
+                 (eprintf "Security Level: ~a~n" (current-security-level))
+                 (eprintf "Priority: ~a~n" (priority-param))
+                 (eprintf "====================================~n")
+                 (eprintf "Listening for JSON-RPC messages...~n~n")
+                 (acp-serve #:modes ACP-MODES #:on-new-session handle-new-session #:run-turn acp-run-turn)]))

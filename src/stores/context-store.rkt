@@ -6,10 +6,16 @@
 (define DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "context.json"))
 
 (define (json->ctx j)
-  (Ctx (hash-ref j 'system) (hash-ref j 'memory) (hash-ref j 'tool_hints) (string->symbol (hash-ref j 'mode "ask")) (string->symbol (hash-ref j 'priority "best")) (hash-ref j 'history '()) (hash-ref j 'compacted_summary "")))
+  (define prio-raw (hash-ref j 'priority "best"))
+  ;; Support both symbol keywords and NL strings
+  (define prio (if (member prio-raw '("best" "fast" "cheap" "compact" "verbose"))
+                   (string->symbol prio-raw)
+                   prio-raw)) ;; Keep as string for NL dispatch
+  (Ctx (hash-ref j 'system) (hash-ref j 'memory) (hash-ref j 'tool_hints) (string->symbol (hash-ref j 'mode "ask")) prio (hash-ref j 'history '()) (hash-ref j 'compacted_summary "")))
 
 (define (ctx->json c)
-  (hash 'system (Ctx-system c) 'memory (Ctx-memory c) 'tool_hints (Ctx-tool-hints c) 'mode (symbol->string (Ctx-mode c)) 'priority (symbol->string (Ctx-priority c)) 'history (Ctx-history c) 'compacted_summary (Ctx-compacted-summary c)))
+  (define prio (Ctx-priority c))
+  (hash 'system (Ctx-system c) 'memory (Ctx-memory c) 'tool_hints (Ctx-tool-hints c) 'mode (symbol->string (Ctx-mode c)) 'priority (if (symbol? prio) (symbol->string prio) prio) 'history (Ctx-history c) 'compacted_summary (Ctx-compacted-summary c)))
 
 (define (load-ctx)
   (if (file-exists? DB-PATH)
