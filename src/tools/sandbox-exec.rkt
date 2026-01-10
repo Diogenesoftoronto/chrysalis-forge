@@ -1,8 +1,8 @@
 #lang racket/base
 (provide run-tiered-code! run-code-with-retry! SECURITY-LEVELS)
-(require racket/sandbox racket/file racket/port "debug.rkt")
+(require racket/sandbox racket/file racket/port "../utils/debug.rkt")
 
-(define SECURITY-LEVELS (hash 'SANDBOX 0 'NET-READ 1 'FULL-FS 2 'GOD-MODE 3))
+(define SECURITY-LEVELS (hash 'SANDBOX 0 'NET-READ 1 'FULL-FS 2 'CONFIRMED-GOD 3 'AUTO-GOD 4))
 (define WORKSPACE (build-path (find-system-path 'home-dir) ".agentd" "workspace"))
 (make-directory* WORKSPACE)
 

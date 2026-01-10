@@ -1,6 +1,6 @@
 #lang racket
 (provide make-openai-sender validate-api-key make-openai-image-generator summarize-conversation estimate-tokens)
-(require net/http-client json net/url racket/string)
+(require net/http-client json net/url racket/string "../utils/utils-spinner.rkt")
 
 (define (make-openai-sender #:model [model "gpt-5.2"] #:api-key [key #f] #:api-base [base "https://api.openai.com/v1"])
   (define k (or key (getenv "OPENAI_API_KEY")))
@@ -28,7 +28,9 @@
         [else (format "~a" prompt)]))
     
     (define payload (jsexpr->bytes (hash 'model model 'response_format (hash 'type "json_object") 'messages (list (hash 'role "user" 'content content)))))
+    (define s-thread (start-spinner! "Thinking...")) ;; User feedback
     (define-values (status _ in) (http-sendrecv host safe-endpoint #:port port #:method "POST" #:headers headers #:data payload #:ssl? ssl?))
+    (stop-spinner! s-thread)
     (define res (bytes->jsexpr (port->bytes in)))
     (close-input-port in)
     (if (string-prefix? (bytes->string/utf-8 status) "HTTP/1.1 200")
@@ -84,7 +86,9 @@
              'n 1 
              'size "1024x1024")))
              
+    (define s-thread (start-spinner! "Generating Image..."))
     (define-values (status _ in) (http-sendrecv host safe-endpoint #:port port #:method "POST" #:headers headers #:data payload #:ssl? ssl?))
+    (stop-spinner! s-thread)
     (define res (bytes->jsexpr (port->bytes in)))
     (close-input-port in)
     

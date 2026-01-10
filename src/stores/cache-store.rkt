@@ -1,7 +1,7 @@
 #lang racket/base
 (provide cache-get cache-set! cache-invalidate! cache-clear! cache-stats 
          make-cache-tools execute-cache-tool)
-(require json racket/file racket/hash racket/format "debug.rkt")
+(require json racket/file racket/hash racket/format "../utils/debug.rkt")
 
 ;; ============================================================================
 ;; WEB SEARCH CACHE - Timestamped caching for web search results

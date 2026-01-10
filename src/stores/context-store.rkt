@@ -1,7 +1,7 @@
 #lang racket/base
 (provide (all-defined-out))
 (provide session-create! session-switch! session-list session-delete!)
-(require json racket/file racket/date "dspy-core.rkt")
+(require json racket/file racket/date "../llm/dspy-core.rkt")
 
 (define DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "context.json"))
 

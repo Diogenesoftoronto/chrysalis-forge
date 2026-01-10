@@ -1,6 +1,6 @@
 #lang racket
 (provide compile! bootstrap-fewshot default-instruction-mutations)
-(require "dspy-core.rkt" "optimizer-meta.rkt" racket/list racket/string)
+(require "dspy-core.rkt" "../core/optimizer-meta.rkt" racket/list racket/string)
 
 (define (bootstrap-fewshot trainset #:k [k 3])
   (take (shuffle trainset) (min k (length trainset))))

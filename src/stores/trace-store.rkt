@@ -1,6 +1,6 @@
 #lang racket/base
 (provide log-trace!)
-(require json racket/file racket/date "debug.rkt")
+(require json racket/file racket/date "../utils/debug.rkt")
 
 (define TRACE-PATH (build-path (find-system-path 'home-dir) ".agentd" "traces.jsonl"))
 

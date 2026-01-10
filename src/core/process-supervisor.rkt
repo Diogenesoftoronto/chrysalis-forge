@@ -1,6 +1,6 @@
 #lang racket
 (provide spawn-service! stop-service! list-services! get-supervisor-tools)
-(require racket/async-channel json "openai-responses-stream.rkt")
+(require racket/async-channel json "../llm/openai-responses-stream.rkt")
 
 (struct Service (id cmd process output-port) #:mutable #:transparent)
 (define SERVICES (make-hash))

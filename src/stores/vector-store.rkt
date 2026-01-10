@@ -1,6 +1,6 @@
 #lang racket/base
 (provide vector-add! vector-search)
-(require json net/http-client racket/math "openai-client.rkt" net/url racket/string racket/port racket/list "debug.rkt" racket/file)
+(require json net/http-client racket/math "../llm/openai-client.rkt" net/url racket/string racket/port racket/list "../utils/debug.rkt" racket/file)
 
 (define VEC-DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "vectors.json"))
 (define DB (make-hash)) ;; id -> (hash 'text "..." 'vec '(...))

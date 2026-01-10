@@ -1,6 +1,6 @@
 #lang racket/base
 (provide log-eval! get-profile-stats get-tool-stats suggest-profile evolve-profile!)
-(require json racket/file racket/list racket/hash racket/string "debug.rkt")
+(require json racket/file racket/list racket/hash racket/string "../utils/debug.rkt")
 
 ;; ============================================================================
 ;; EVAL STORE - Track sub-agent performance and learn optimal profiles

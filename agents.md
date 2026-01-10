@@ -4,18 +4,18 @@ Chrysalis Forge defines agents as **Evolvable Modules** that combine logic, stat
 
 ## Core Components
 
-### 1. Signatures (`dspy-core.rkt`)
+### 1. Signatures (`src/llm/dspy-core.rkt`)
 Signatures define the interface of an agent's task — input fields and expected output fields.
 ```racket
 (define OptSig (signature Opt (in [inst string?] [fails string?]) (out [thought string?] [new_inst string?])))
 ```
 
-### 2. Modules (`dspy-core.rkt`)
+### 2. Modules (`src/llm/dspy-core.rkt`)
 - **Predict**: Direct completion based on a signature
 - **ChainOfThought (CoT)**: Structured reasoning before output
 - **Demos**: Few-shot examples to guide performance
 
-### 3. Context & Persistence (`context-store.rkt`)
+### 3. Context & Persistence (`src/stores/context-store.rkt`)
 Agents operate within a `Ctx` (Context):
 - `system`: High-level persona and rules
 - `memory`: Working memory/scratchpad
@@ -28,7 +28,7 @@ Agents operate within a `Ctx` (Context):
 
 **Project Rules**: `.agentd/rules.md` in the working directory is automatically appended to the system prompt.
 
-### 4. Tool System (`acp-tools.rkt`)
+### 4. Tool System (`src/tools/acp-tools.rkt`)
 
 **25 Tools** organized by category:
 
@@ -39,7 +39,7 @@ Agents operate within a `Ctx` (Context):
 | **Jujutsu** | jj_status, jj_log, jj_diff, jj_undo, jj_op_log, jj_op_restore, jj_workspace_add, jj_workspace_list, jj_describe, jj_new |
 | **Evolution** | suggest_profile, profile_stats, evolve_system, log_feedback |
 
-### 5. Sub-Agents (`sub-agent.rkt`)
+### 5. Sub-Agents (`src/core/sub-agent.rkt`)
 
 Parallel task execution with specialized tool profiles:
 
@@ -55,7 +55,7 @@ Parallel task execution with specialized tool profiles:
 
 Tools: `spawn_task`, `await_task`, `task_status`
 
-### 6. Test Generation (`test-gen.rkt`)
+### 6. Test Generation (`src/utils/test-gen.rkt`)
 
 LLM-powered, language-agnostic test generation:
 ```racket
@@ -75,7 +75,7 @@ LLM-powered, language-agnostic test generation:
 1. Bootstrap few-shot examples
 2. Instruction mutation testing
 
-### Eval Store (`eval-store.rkt`)
+### Eval Store (`src/stores/eval-store.rkt`)
 Tracks sub-agent performance for learning:
 - `log-eval!`: Record task results
 - `get-profile-stats`: View success rates per profile
@@ -97,7 +97,7 @@ log_feedback → eval-store → profile_stats → suggest_profile
 4. **Trace Logging**: All tasks logged to `traces.jsonl`
 5. **Eval Logging**: Profile performance logged to `evals.jsonl`
 
-## Process Supervision (`process-supervisor.rkt`)
+## Process Supervision (`src/core/process-supervisor.rkt`)
 
 Manage long-running services:
 - `spawn-service!`: Start background process

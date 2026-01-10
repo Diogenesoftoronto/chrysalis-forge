@@ -1,24 +1,25 @@
 #lang racket
-(require racket/cmdline json racket/file racket/list "dotenv.rkt"
-         "dspy-core.rkt" "openai-responses-stream.rkt" "context-store.rkt" "openai-client.rkt"
-         "acp-tools.rkt" "acp-stdio.rkt" "optimizer-gepa.rkt" "trace-store.rkt"
-         "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt"
-         "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt" "debug.rkt"
-         "pricing-model.rkt" "vector-store.rkt" "workflow-engine.rkt" "utils-time.rkt"
-         "web-search.rkt")
+(require racket/cmdline json racket/file racket/list "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
+
+         "src/utils/dotenv.rkt" "src/llm/openai-responses-stream.rkt" "src/llm/openai-client.rkt"
+         "src/tools/acp-tools.rkt" "src/core/optimizer-gepa.rkt" "src/stores/trace-store.rkt" "src/tools/rdf-tools.rkt"
+         "src/core/process-supervisor.rkt" "src/tools/sandbox-exec.rkt" "src/utils/debug.rkt" "src/llm/pricing-model.rkt"
+         "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt")
 
 (load-dotenv!)
+
+
 (define api-key (getenv "OPENAI_API_KEY"))
 (define env-api-key api-key)
 (define base-url-param (make-parameter (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1")))
-(define model-param (make-parameter "gpt-5.2"))
-(define vision-model-param (make-parameter "gpt-5.2"))
-(define interactive-param (make-parameter #f))
+(define model-param (make-parameter (or (getenv "MODEL") "gpt-5.2")))
+(define vision-model-param (make-parameter (or (getenv "VISION_MODEL") "gpt-5.2")))
+(define interactive-param (make-parameter (or (getenv "INTERACTIVE") #f)))
 (define attachments (make-parameter '())) ; List of (type content) pairs
 
-(define budget-param (make-parameter +inf.0))
-(define timeout-param (make-parameter +inf.0))
-(define pretty-param (make-parameter "none"))
+(define budget-param (make-parameter (or (getenv "BUDGET") +inf.0)))
+(define timeout-param (make-parameter (or (getenv "TIMEOUT") +inf.0)))
+(define pretty-param (make-parameter (or (getenv "PRETTY") "none")))
 (define session-start-time (current-seconds))
 (define total-session-cost 0.0)
 
@@ -35,8 +36,24 @@
   (flush-output)
   (if (member (string-downcase (or (read-line) "n")) '("y" "yes")) #t (error 'security "Denied.")))
 
+(define llm-judge-param (make-parameter (or (getenv "LLM_JUDGE") #f)))
+(define llm-judge-model-param (make-parameter (or (getenv "LLM_JUDGE_MODEL") "gpt-5.2")))
+
+(define (evaluate-safety action content)
+  (unless (llm-judge-param) (values #t "")) ;; Pass if judge not enabled
+  
+  (define sender (make-openai-sender #:model (llm-judge-model-param)))
+  (define prompt (format "You are a Security Auditor. A user or agent is attempting the following action:\nACTION: ~a\nCONTENT/COMMAND:\n~a\n\nIs this action safe and appropriate? If YES, reply with handling details and end with [SAFE]. If NO, explain why and end with [UNSAFE]." action content))
+  (define-values (ok? res usage) (sender prompt))
+  (if (and ok? (string-contains? res "[SAFE]"))
+      (values #t res)
+      (values #f res)))
+
 (define (execute-tool name args)
-  (with-handlers ([exn:fail? (λ (e) (format "Tool Error: ~a" (exn-message e)))])
+  (log-debug 2 'tool "CALLED: ~a\n  Args: ~v" name args)
+  (with-handlers ([exn:fail? (λ (e) 
+                               (log-debug 1 'tool "ERROR: ~a failed: ~a" name (exn-message e))
+                               (format "Tool Error: ~a" (exn-message e)))])
     (cond
     [(string-prefix? name "rdf_") (execute-rdf-tool name args)]
     [(string-prefix? name "web_") (execute-web-search name args)]
@@ -52,10 +69,26 @@
             ["read_file" (if (or (>= (current-security-level) 1) (string-contains? (hash-ref args 'path) ".agentd/workspace")) 
                              (if (file-exists? (hash-ref args 'path)) (file->string (hash-ref args 'path)) "404") "Permission Denied.")]
             ["write_file" (if (>= (current-security-level) 2) 
-                              (begin (confirm-risk! "WRITE" (hash-ref args 'path)) (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")
+                              (begin 
+                                (when (< (current-security-level) 4) (confirm-risk! "WRITE" (hash-ref args 'path)))
+                                ;; Security Judge Check
+                                (if (llm-judge-param)
+                                    (let-values ([(safe? reason) (evaluate-safety "write_file" (format "File: ~a\nContent:\n~a" (hash-ref args 'path) (hash-ref args 'content)))])
+                                      (if safe? 
+                                          (begin (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")
+                                          (format "Security Judge Blocked Action: ~a" reason)))
+                                    (begin (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")))
                               "Permission Denied: Requires Level 2.")]
-            ["run_term" (if (= (current-security-level) 3) 
-                            (begin (confirm-risk! "TERM" (hash-ref args 'cmd)) (with-output-to-string (λ () (system (hash-ref args 'cmd)))))
+            ["run_term" (if (>= (current-security-level) 3) 
+                            (begin 
+                              (when (< (current-security-level) 4) (confirm-risk! "TERM" (hash-ref args 'cmd)))
+                              ;; Security Judge Check
+                              (if (llm-judge-param)
+                                  (let-values ([(safe? reason) (evaluate-safety "run_term" (hash-ref args 'cmd))])
+                                    (if safe?
+                                        (with-output-to-string (λ () (system (hash-ref args 'cmd))))
+                                        (format "Security Judge Blocked Action: ~a" reason)))
+                                  (with-output-to-string (λ () (system (hash-ref args 'cmd))))))
                             "Permission Denied: Requires Level 3.")]
             ["memory_save"
              (vector-add! (hash-ref args 'text) api-key (base-url-param))
@@ -95,7 +128,7 @@
     ['code (append base fs term (get-supervisor-tools) (make-rdf-tools) (make-web-search-tools) mem-tools)]
     ['semantic (append base (make-rdf-tools) mem-tools)]
     [_ base]))
-  (log-debug 1 'tools "Available tools: ~a" (map (λ (t) (hash-ref (hash-ref t 'function) 'name)) tools))
+  (log-debug/once 1 'tools "Available tools: ~a" (map (λ (t) (hash-ref (hash-ref t 'function) 'name)) tools))
   tools)
 (define CONTEXT-LIMIT-TOKENS (make-parameter 100000)) ;; Configurable context limit
 
@@ -237,9 +270,14 @@
      (if (= (length parts) 2)
          (match (first parts)
            ["model" (model-param (second parts)) (printf "Model set to ~a\n" (second parts))]
+           ["judge-model" (llm-judge-model-param (second parts)) (printf "Judge Model set to ~a\n" (second parts))]
            ["budget" (budget-param (string->number (second parts))) (printf "Budget set to ~a\n" (second parts))]
            [_ (printf "Unknown config key: ~a\n" (first parts))])
          (displayln "Usage: /config <key> <value>"))]
+
+    ["judge"
+      (llm-judge-param (not (llm-judge-param)))
+      (printf "LLM Security Judge: ~a\n" (if (llm-judge-param) "ENABLED" "DISABLED"))]
 
     ["session"
      (define parts (string-split (string-trim (substring input 8))))
@@ -347,21 +385,21 @@ EOF
 (command-line #:program "agentd" 
               #:once-each 
               [("--acp") "Run ACP" (mode-param 'acp)]
-              [("--perms") p "Security Level (0, 1, 2, god)"
+              [("--perms") p "Security Level (0, 1, 2, 3, god)"
                            (match p
                              ["0" (current-security-level 0)]
                              ["1" (current-security-level 1)]
                              ["2" (current-security-level 2)]
-                             ["god" (current-security-level 3)]
-                             [_ (error "Invalid permission level. Use 0, 1, 2, or god.")])]
+                             ["3" (current-security-level 3)]
+                             ["god" (current-security-level 4)]
+                             [_ (error "Invalid permission level. Use 0, 1, 2, 3, or god.")])]
 
-              [("--base-url") url "Override OpenAI API Base URL" (base-url-param url)]
-              [("--model") m "Override Default Model" (model-param m)]
-              [("--budget") b "Set Session Budget (USD)" (budget-param (string->number b))]
-              [("--timeout") t "Set Session Timeout (e.g. 10s, 5m)" (timeout-param (parse-duration t))]
-              [("--pretty") p "Output format (e.g. glow)" (pretty-param p)]
-              [("-d" "--debug") "Enable Debug Mode (Level 1)" (current-debug-level 1)]
-              [("-v" "--verbose") "Enable Verbose Debug Mode (Level 2)" (current-debug-level 2)]
+              [("-d" "--debug") level "Set Debug Level (0, 1, 2, verbose)" 
+                           (let ([val (string->number level)])
+                             (cond 
+                               [(equal? level "verbose") (current-debug-level 2)]
+                               [val (current-debug-level val)]
+                               [else (current-debug-level 1)]))]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
               #:args raw-args
               (match (mode-param)

@@ -1,6 +1,6 @@
 #lang racket/base
 (provide make-web-search-tools execute-web-search)
-(require json racket/file racket/string racket/system racket/port racket/format "debug.rkt")
+(require json racket/file racket/string racket/system racket/port racket/format "../utils/debug.rkt")
 
 ;; ============================================================================
 ;; WEB SEARCH - Exa API with curl fallback

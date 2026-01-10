@@ -1,6 +1,6 @@
 #lang racket/base
 (provide responses-run-turn/stream)
-(require racket/port racket/string json net/http-client racket/match net/url racket/list)
+(require racket/port racket/string json net/http-client racket/match net/url racket/list "../utils/utils-spinner.rkt")
 
 (define (http-post/stream api-key payload host port endpoint ssl?)
   (define hc (http-conn-open host #:port port #:ssl? ssl?))
@@ -26,8 +26,10 @@
   (define body (jsexpr->bytes req-with-usage))
   (define headers (list "Content-Type: application/json" (format "Authorization: Bearer ~a" api-key)))
   
+  (define s-thread (start-spinner! "Thinking...")) ;; User feedback
   (http-conn-send! hc endpoint #:method "POST" #:headers headers #:data body)
   (define-values (status _ in) (http-conn-recv! hc #:method "POST" #:close? #f))
+  (stop-spinner! s-thread)
   (define pending (make-hash)) 
   (define final-usage (hash))
   (define full-content '())

@@ -2,7 +2,7 @@
 
 (provide make-acp-tools execute-acp-tool)
 (require json racket/file racket/string racket/system racket/list racket/port racket/match racket/path
-         "eval-store.rkt" "optimizer-gepa.rkt" "mcp-client.rkt")
+         "../stores/eval-store.rkt" "../core/optimizer-gepa.rkt" "mcp-client.rkt" "../llm/openai-client.rkt")
 
 (define mcp-clients (make-hash))
 (define mcp-tool-map (make-hash))
@@ -211,7 +211,15 @@
                                                              'success (hash 'type "boolean" 'description "Whether task succeeded")
                                                              'task_type (hash 'type "string" 'description "Category of task")
                                                              'feedback (hash 'type "string" 'description "Additional feedback"))
-                                           'required '("task_id" "success")))))
+                                           'required '("task_id" "success"))))
+   (hash 'type "function"
+         'function (hash 'name "use_llm_judge"
+                         'description "Use an LLM as a judge to evaluate content against specific criteria. Useful for security review, code quality checks, etc."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'content (hash 'type "string" 'description "Content to evaluate")
+                                                             'criteria (hash 'type "string" 'description "Evaluation criteria or instructions")
+                                                             'model (hash 'type "string" 'description "Optional: model to use (e.g. 'gpt-5.2', 'o1-preview'). Defaults to 'gpt-5.2'."))
+                                           'required '("content" "criteria"))))
    ;; Dynamic MCP tools
    (for/list ([client (in-hash-values mcp-clients)]
               #:when #t
@@ -366,6 +374,15 @@
                   #:task-type (hash-ref args 'task_type "unknown")
                   #:feedback (hash-ref args 'feedback ""))
        "Feedback logged for learning."]
+
+      ["use_llm_judge"
+       (define content (hash-ref args 'content))
+       (define criteria (hash-ref args 'criteria))
+       (define model (hash-ref args 'model "gpt-5.2"))
+       (define sender (make-openai-sender #:model model))
+       (define prompt (format "You are an expert judge. Evaluate the following content based on these criteria:\n\nCRITERIA:\n~a\n\nCONTENT:\n~a\n\nProvide a detailed assessment and a final verdict." criteria content))
+       (define-values (ok? res usage) (sender prompt))
+       (if ok? res (format "Judge Error: ~a" res))]
 
        ["add_mcp_server"
         (if (>= security-level 2)

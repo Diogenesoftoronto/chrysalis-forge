@@ -1,6 +1,6 @@
 #lang racket
 (provide (all-defined-out))
-(require "dspy-core.rkt" "openai-client.rkt" json)
+(require "../llm/dspy-core.rkt" "../llm/openai-client.rkt" json)
 
 (define OptSig (signature Opt (in [inst string?] [fails string?]) (out [thought string?] [new_inst string?])))
 (define (make-meta-optimizer) (ChainOfThought OptSig #:instructions "Fix failing examples. Return JSON." #:params (hash 'temperature 0.7)))
