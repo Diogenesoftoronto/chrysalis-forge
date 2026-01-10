@@ -5,7 +5,7 @@
 (struct SigField (name pred) #:transparent)
 (struct Signature (name ins outs) #:transparent)
 (struct Module (id sig strategy instructions demos params) #:transparent)
-(struct Ctx (system memory tool-hints mode) #:transparent)
+(struct Ctx (system memory tool-hints mode history compacted-summary) #:transparent)
 (struct RunResult (ok? outputs raw prompt meta) #:transparent)
 
 (define-syntax (signature stx)
@@ -17,9 +17,11 @@
 
 (define-syntax (ctx stx)
   (syntax-case stx ()
-    [(_ #:system s #:memory m #:tool-hints t #:mode mo) #'(Ctx s m t mo)]
-    [(_ #:system s) #'(Ctx s "" "" 'ask)]
-    [(_) #'(Ctx "You are a helpful agent." "" "" 'ask)]))
+    [(_ #:system s #:memory m #:tool-hints t #:mode mo #:history h #:compacted c) #'(Ctx s m t mo h c)]
+    [(_ #:system s #:memory m #:tool-hints t #:mode mo #:history h) #'(Ctx s m t mo h "")]
+    [(_ #:system s #:memory m #:tool-hints t #:mode mo) #'(Ctx s m t mo '() "")]
+    [(_ #:system s) #'(Ctx s "" "" 'ask '() "")]
+    [(_) #'(Ctx "You are a helpful agent." "" "" 'ask '() "")]))
 
 (define (Predict sig #:id [id #f] #:instructions [inst ""] #:demos [demos '()] #:params [p (hash)])
   (Module (or id (format "Predict/~a" (Signature-name sig))) sig 'predict inst demos p))

@@ -1,7 +1,8 @@
 #lang racket/base
 
 (provide make-acp-tools execute-acp-tool)
-(require json racket/file racket/string racket/system racket/list racket/port racket/match racket/path)
+(require json racket/file racket/string racket/system racket/list racket/port racket/match racket/path
+         "eval-store.rkt" "optimizer-gepa.rkt")
 
 ;; Tool definitions for the agent
 (define (make-acp-tools)
@@ -89,7 +90,104 @@
                                            'properties (hash 'path (hash 'type "string" 'description "Path to repository")
                                                              'branch (hash 'type "string" 'description "Branch name")
                                                              'create (hash 'type "boolean" 'description "If true, create the branch (-b flag)"))
-                                           'required '("branch"))))))
+                                           'required '("branch"))))
+   ;; Jujutsu (jj) tools - next-gen Git-compatible VCS with easy rollback
+   (hash 'type "function"
+         'function (hash 'name "jj_status"
+                         'description "Get jj status showing current changes and working copy state."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "jj_log"
+                         'description "Show jj commit log with graph visualization."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository")
+                                                             'count (hash 'type "integer" 'description "Number of commits to show (default 10)"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "jj_diff"
+                         'description "Show jj diff of current changes or between revisions."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository")
+                                                             'revision (hash 'type "string" 'description "Optional revision to diff"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "jj_undo"
+                         'description "Undo the last jj operation. Can undo commits, rebases, etc. Very safe - the undo itself can be undone."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "jj_op_log"
+                         'description "Show the operation log - history of all jj operations. Use with jj_op_restore to rollback to any point."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository")
+                                                             'count (hash 'type "integer" 'description "Number of operations to show"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "jj_op_restore"
+                         'description "Restore repository to a specific operation state. Use jj_op_log to find the operation ID."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository")
+                                                             'operation_id (hash 'type "string" 'description "Operation ID from jj_op_log"))
+                                           'required '("operation_id"))))
+   (hash 'type "function"
+         'function (hash 'name "jj_workspace_add"
+                         'description "Create a new parallel workspace (like git worktree). Allows working on multiple tasks simultaneously."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Base repository path")
+                                                             'workspace_path (hash 'type "string" 'description "Path for the new workspace")
+                                                             'revision (hash 'type "string" 'description "Optional revision to check out in new workspace"))
+                                           'required '("workspace_path"))))
+   (hash 'type "function"
+         'function (hash 'name "jj_workspace_list"
+                         'description "List all workspaces in the repository."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "jj_describe"
+                         'description "Set or update the description (commit message) for the current change."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository")
+                                                             'message (hash 'type "string" 'description "Commit message/description"))
+                                           'required '("message"))))
+   (hash 'type "function"
+         'function (hash 'name "jj_new"
+                         'description "Create a new change (commit). In jj, all changes are automatically tracked."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'path (hash 'type "string" 'description "Path to repository")
+                                                             'message (hash 'type "string" 'description "Optional description for the new change"))
+                                           'required '())))
+   ;; Self-evolution and feedback tools
+   (hash 'type "function"
+         'function (hash 'name "suggest_profile"
+                         'description "Get optimal sub-agent profile for a task type based on historical success rates."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'task_type (hash 'type "string" 'description "Type of task (e.g. 'file-edit', 'search', 'vcs')"))
+                                           'required '("task_type"))))
+   (hash 'type "function"
+         'function (hash 'name "profile_stats"
+                         'description "Get performance statistics for sub-agent profiles. Use to learn which profiles work best."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'profile (hash 'type "string" 'description "Optional: specific profile to query"))
+                                           'required '())))
+   (hash 'type "function"
+         'function (hash 'name "evolve_system"
+                         'description "Trigger GEPA evolution of the system prompt based on feedback. Self-improvement capability."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'feedback (hash 'type "string" 'description "Feedback about what to improve"))
+                                           'required '("feedback"))))
+   (hash 'type "function"
+         'function (hash 'name "log_feedback"
+                         'description "Log feedback about a task result for learning. Feeds into profile optimization."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'task_id (hash 'type "string" 'description "Task ID")
+                                                             'success (hash 'type "boolean" 'description "Whether task succeeded")
+                                                             'task_type (hash 'type "string" 'description "Category of task")
+                                                             'feedback (hash 'type "string" 'description "Additional feedback"))
+                                           'required '("task_id" "success"))))))
 
 ;; Execute a tool by name
 (define (execute-acp-tool name args security-level)
@@ -161,6 +259,81 @@
                (run-git-cmd (hash-ref args 'path ".") "checkout" "-b" (hash-ref args 'branch))
                (run-git-cmd (hash-ref args 'path ".") "checkout" (hash-ref args 'branch)))
            "Permission Denied: Requires security level 2.")]
+      
+      ;; Jujutsu (jj) tools
+      ["jj_status"
+       (run-jj-cmd (hash-ref args 'path ".") "status")]
+      
+      ["jj_log"
+       (define count (hash-ref args 'count 10))
+       (run-jj-cmd (hash-ref args 'path ".") "log" "-n" (number->string count))]
+      
+      ["jj_diff"
+       (define rev (hash-ref args 'revision #f))
+       (if rev
+           (run-jj-cmd (hash-ref args 'path ".") "diff" "-r" rev)
+           (run-jj-cmd (hash-ref args 'path ".") "diff"))]
+      
+      ["jj_undo"
+       (if (>= security-level 2)
+           (run-jj-cmd (hash-ref args 'path ".") "undo")
+           "Permission Denied: Requires security level 2.")]
+      
+      ["jj_op_log"
+       (define count (hash-ref args 'count 10))
+       (run-jj-cmd (hash-ref args 'path ".") "op" "log" "-n" (number->string count))]
+      
+      ["jj_op_restore"
+       (if (>= security-level 2)
+           (run-jj-cmd (hash-ref args 'path ".") "op" "restore" (hash-ref args 'operation_id))
+           "Permission Denied: Requires security level 2.")]
+      
+      ["jj_workspace_add"
+       (if (>= security-level 2)
+           (let ([rev (hash-ref args 'revision #f)])
+             (if rev
+                 (run-jj-cmd (hash-ref args 'path ".") "workspace" "add" (hash-ref args 'workspace_path) "-r" rev)
+                 (run-jj-cmd (hash-ref args 'path ".") "workspace" "add" (hash-ref args 'workspace_path))))
+           "Permission Denied: Requires security level 2.")]
+      
+      ["jj_workspace_list"
+       (run-jj-cmd (hash-ref args 'path ".") "workspace" "list")]
+      
+      ["jj_describe"
+       (if (>= security-level 2)
+           (run-jj-cmd (hash-ref args 'path ".") "describe" "-m" (hash-ref args 'message))
+           "Permission Denied: Requires security level 2.")]
+      
+      ["jj_new"
+       (if (>= security-level 2)
+           (let ([msg (hash-ref args 'message #f)])
+             (if msg
+                 (run-jj-cmd (hash-ref args 'path ".") "new" "-m" msg)
+                 (run-jj-cmd (hash-ref args 'path ".") "new")))
+           "Permission Denied: Requires security level 2.")]
+      
+      ;; Self-evolution tools
+      ["suggest_profile"
+       (define-values (profile rate) (suggest-profile (hash-ref args 'task_type)))
+       (format "Suggested profile: ~a (success rate: ~a%)" profile (* 100 rate))]
+      
+      ["profile_stats"
+       (define profile (hash-ref args 'profile #f))
+       (define stats (get-profile-stats (if profile (string->symbol profile) #f)))
+       (if stats (format "~a" stats) "No stats available yet.")]
+      
+      ["evolve_system"
+       (if (>= security-level 2)
+           (gepa-evolve! (hash-ref args 'feedback))
+           "Permission Denied: Requires security level 2.")]
+      
+      ["log_feedback"
+       (log-eval! #:task-id (hash-ref args 'task_id)
+                  #:success? (hash-ref args 'success)
+                  #:profile 'unknown
+                  #:task-type (hash-ref args 'task_type "unknown")
+                  #:feedback (hash-ref args 'feedback ""))
+       "Feedback logged for learning."]
       
       [_ (format "Unknown tool: ~a" name)])))
 
@@ -253,3 +426,21 @@
     (if (= status 0)
         output
         (format "Git error (exit ~a): ~a" status errors))))
+
+;; Helper: Run a jj (Jujutsu) command and capture output
+(define (run-jj-cmd path . args)
+  (define jj-path (find-executable-path "jj"))
+  (unless jj-path (error 'jj "jj (Jujutsu) executable not found. Install from https://martinvonz.github.io/jj/"))
+  (parameterize ([current-directory path])
+    (define-values (sp stdout stdin stderr) 
+      (apply subprocess #f #f #f jj-path args))
+    (close-output-port stdin)
+    (define output (port->string stdout))
+    (define errors (port->string stderr))
+    (subprocess-wait sp)
+    (define status (subprocess-status sp))
+    (close-input-port stdout)
+    (close-input-port stderr)
+    (if (= status 0)
+        output
+        (format "jj error (exit ~a): ~a" status errors))))

@@ -6,21 +6,27 @@
 (define DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "context.json"))
 
 (define (json->ctx j)
-  (Ctx (hash-ref j 'system) (hash-ref j 'memory) (hash-ref j 'tool_hints) (string->symbol (hash-ref j 'mode "ask"))))
+  (Ctx (hash-ref j 'system) (hash-ref j 'memory) (hash-ref j 'tool_hints) (string->symbol (hash-ref j 'mode "ask")) (hash-ref j 'history '()) (hash-ref j 'compacted_summary "")))
 
 (define (ctx->json c)
-  (hash 'system (Ctx-system c) 'memory (Ctx-memory c) 'tool_hints (Ctx-tool-hints c) 'mode (symbol->string (Ctx-mode c))))
+  (hash 'system (Ctx-system c) 'memory (Ctx-memory c) 'tool_hints (Ctx-tool-hints c) 'mode (symbol->string (Ctx-mode c)) 'history (Ctx-history c) 'compacted_summary (Ctx-compacted-summary c)))
 
 (define (load-ctx)
   (if (file-exists? DB-PATH)
       (let ([db (call-with-input-file DB-PATH (λ (in) (read-json in)))])
         (hash 'active (string->symbol (hash-ref db 'active))
               'items (for/hash ([(k v) (hash-ref db 'items)]) (values k (json->ctx v)))))
-      (hash 'active 'default 'items (hash 'default (Ctx (default-system-prompt) "" "" 'ask)))))
+      (hash 'active 'default 'items (hash 'default (Ctx (default-system-prompt) "" "" 'ask '() "")))))
 
 (define (default-system-prompt)
   (format #<<EOF
 You are agentd, an AI agent. Your task is to analyze content and assist the user.
+
+<capabilities>
+You HAVE access to real-time information via the `web_search` tool.
+You MUST use `web_search` when asked about current events, weather, news, or any information not in your training data.
+DO NOT say "I don't have access" or "I cannot browse". You DO have these capabilities. USE THEM.
+</capabilities>
 
 <rules>
 1. Be concise and direct in your responses
@@ -30,7 +36,7 @@ You are agentd, an AI agent. Your task is to analyze content and assist the user
 5. If the requested information is not found, clearly state that
 6. Any file paths you use MUST be absolute
 7. **IMPORTANT**: If you need information from a linked page or search result, use the web_fetch tool to get that content
-8. **IMPORTANT**: If you need to search for more information, use the web_search tool
+8. **IMPORTANT**: If you need to search for more information, use the web_search tool or web_search_news
 9. After fetching a link, analyze the content yourself to extract what's needed
 10. Don't hesitate to follow multiple links or perform multiple searches if necessary to get complete information
 11. **CRITICAL**: At the end of your response, include a "Sources" section listing ALL URLs that were useful in answering the question
@@ -75,7 +81,7 @@ EOF
   (define items (hash-ref db 'items))
   (if (hash-has-key? items (string->symbol name))
       (error "Session already exists")
-      (save-ctx! (hash-set db 'items (hash-set items (string->symbol name) (Ctx (default-system-prompt) "" "" mode))))))
+      (save-ctx! (hash-set db 'items (hash-set items (string->symbol name) (Ctx (default-system-prompt) "" "" mode '() ""))))))
 
 (define (session-switch! name)
   (define db (load-ctx))

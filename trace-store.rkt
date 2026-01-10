@@ -8,5 +8,5 @@
   (log-debug 1 'trace "Task: ~a | Cost: $~a" task (real->decimal-string cost 4))
   (make-directory* (build-path (find-system-path 'home-dir) ".agentd"))
   (call-with-output-file TRACE-PATH
-    (λ (out) (write-json (hash 'ts (current-seconds) 'task task 'final final 'tokens tokens 'cost cost) out) (newline out))
+    (λ (out) (write-json (hash 'ts (current-seconds) 'task task 'final final 'tokens tokens 'cost cost 'tool_results tool-results) out) (newline out))
     #:exists 'append))

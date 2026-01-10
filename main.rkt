@@ -4,7 +4,8 @@
          "acp-tools.rkt" "acp-stdio.rkt" "optimizer-gepa.rkt" "trace-store.rkt"
          "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt"
          "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt" "debug.rkt"
-         "pricing-model.rkt" "vector-store.rkt" "workflow-engine.rkt" "utils-time.rkt")
+         "pricing-model.rkt" "vector-store.rkt" "workflow-engine.rkt" "utils-time.rkt"
+         "web-search.rkt")
 
 (load-dotenv!)
 (define api-key (getenv "OPENAI_API_KEY"))
@@ -38,6 +39,7 @@
   (with-handlers ([exn:fail? (λ (e) (format "Tool Error: ~a" (exn-message e)))])
     (cond
     [(string-prefix? name "rdf_") (execute-rdf-tool name args)]
+    [(string-prefix? name "web_") (execute-web-search name args)]
     [(string-prefix? name "service_") (if (>= (current-security-level) 2) 
                                           (match name ["service_start" (spawn-service! (hash-ref args 'id) (hash-ref args 'cmd) api-key)] 
                                                  ["service_stop" (stop-service! (hash-ref args 'id))] ["service_list" (list-services!)])
@@ -55,7 +57,6 @@
             ["run_term" (if (= (current-security-level) 3) 
                             (begin (confirm-risk! "TERM" (hash-ref args 'cmd)) (with-output-to-string (λ () (system (hash-ref args 'cmd)))))
                             "Permission Denied: Requires Level 3.")]
-            [_ (format "Unknown: ~a" name)]
             ["memory_save"
              (vector-add! (hash-ref args 'text) api-key (base-url-param))
              "Saved to vector memory."]
@@ -70,6 +71,7 @@
               (define gen (make-openai-image-generator #:api-key api-key #:api-base (base-url-param)))
               (define-values (ok? url) (gen (hash-ref args 'prompt)))
               (if ok? (format "Generated Image: ~a" url) (format "Failed: ~a" url))]
+            [_ (format "Unknown: ~a" name)]
              )])))
 
 (define (get-tools mode)
@@ -87,12 +89,15 @@
                      (hash 'type "function" 'function (hash 'name "generate_image" 'parameters (hash 'type "object" 'properties (hash 'prompt (hash 'type "string")))))))
   (define fs (make-acp-tools))
   (define term (list (hash 'type "function" 'function (hash 'name "run_term" 'parameters (hash 'type "object" 'properties (hash 'cmd (hash 'type "string")))))))
-  (match mode
+  (define tools (match mode
     ['ask base]
     ['architect (append base (list (first fs)))] ; read only
-    ['code (append base fs term (get-supervisor-tools) (make-rdf-tools) mem-tools)]
+    ['code (append base fs term (get-supervisor-tools) (make-rdf-tools) (make-web-search-tools) mem-tools)]
     ['semantic (append base (make-rdf-tools) mem-tools)]
     [_ base]))
+  (log-debug 1 'tools "Available tools: ~a" (map (λ (t) (hash-ref (hash-ref t 'function) 'name)) tools))
+  tools)
+(define CONTEXT-LIMIT-TOKENS (make-parameter 100000)) ;; Configurable context limit
 
 (define (acp-run-turn sid prompt-blocks emit! tool-emit! cancelled?)
   (define ctx (ctx-get-active))
@@ -108,7 +113,18 @@
                        [(list 'file path content) (hash 'type "text" 'text (format "Attached File (~a):\n```\n~a\n```" path content))]))))]
       [else (hash-ref (first prompt-blocks) 'text)]))
       
-  (define history (list (hash 'role "system" 'content (Ctx-system ctx)) (hash 'role "user" 'content input-content)))
+  ;; Build history with compacted summary if it exists
+  (define base-history
+    (if (null? (Ctx-history ctx))
+        ;; Fresh start - include compacted summary if available
+        (if (> (string-length (Ctx-compacted-summary ctx)) 0)
+            (list (hash 'role "system" 'content (Ctx-system ctx))
+                  (hash 'role "system" 'content (format "Previous conversation summary:\n~a" (Ctx-compacted-summary ctx))))
+            (list (hash 'role "system" 'content (Ctx-system ctx))))
+        (Ctx-history ctx)))
+  
+  (define history (append base-history (list (hash 'role "user" 'content input-content))))
+
   
   ;; Auto-switch to vision model if images are present
   (define has-images? (and (list? input-content) (ormap (λ (x) (equal? (hash-ref x 'type) "image_url")) input-content)))
@@ -131,7 +147,7 @@
           msgs))
 
     (define (mk-req) (hash 'model current-model 'messages effective-msgs 'tools (get-tools (Ctx-mode ctx)) 'stream #t))
-    (define-values (res usage) 
+    (define-values (assistant-msg res usage) 
       (responses-run-turn/stream #:api-key api-key #:make-request mk-req #:emit! emit! #:tool-run execute-tool #:cancelled? cancelled? #:api-base (base-url-param)))
     
     (define in-tok (hash-ref usage 'prompt_tokens 0))
@@ -139,9 +155,39 @@
     (define cost (calculate-cost current-model in-tok out-tok))
     (set! total-session-cost (+ total-session-cost cost))
 
-    (unless (null? res) 
-      (log-trace! #:task "Turn" #:history msgs #:tool-results res #:final-response "Streamed" #:tokens usage #:cost cost)
-      (loop (append msgs (list (hash 'role "assistant" 'tool_calls (for/list ([t res]) (hash 'id (hash-ref t 'tool_call_id) 'type "function" 'function (hash 'name (hash-ref t 'name) 'arguments "{}"))))) res)))))
+    (if (null? res)
+      ;; Final turn: Save history back to context, with compaction if needed
+      (let* ([db (load-ctx)]
+             [items (hash-ref db 'items)]
+             [active-id (hash-ref db 'active)]
+             [current-ctx (hash-ref items active-id)]
+             [final-msgs (append msgs (list assistant-msg))]
+             ;; Check if we need to compact
+             [estimated-tokens (estimate-tokens (jsexpr->string final-msgs))]
+             [compact-threshold (* 0.8 (CONTEXT-LIMIT-TOKENS))])
+        (if (> estimated-tokens compact-threshold)
+            ;; Compact: summarize first half of messages, keep recent ones
+            (let* ([mid (quotient (length final-msgs) 2)]
+                   [msgs-to-compact (take final-msgs mid)]
+                   [msgs-to-keep (drop final-msgs mid)]
+                   [old-summary (Ctx-compacted-summary current-ctx)]
+                   [new-summary (summarize-conversation msgs-to-compact 
+                                                        #:model (model-param) 
+                                                        #:api-key api-key 
+                                                        #:api-base (base-url-param))]
+                   [combined-summary (if (> (string-length old-summary) 0)
+                                         (format "~a\n\n---\n\n~a" old-summary new-summary)
+                                         new-summary)])
+              (save-ctx! (hash-set db 'items 
+                           (hash-set items active-id 
+                             (struct-copy Ctx current-ctx 
+                               [history msgs-to-keep]
+                               [compacted-summary combined-summary])))))
+            ;; No compaction needed
+            (save-ctx! (hash-set db 'items (hash-set items active-id (struct-copy Ctx current-ctx [history final-msgs]))))))
+      (begin
+        (log-trace! #:task "Turn" #:history msgs #:tool-results res #:final-response "Streamed" #:tokens usage #:cost cost)
+        (loop (append msgs (list assistant-msg) res))))))
 
 (define (handle-new-session sid mode) 
   (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [mode (string->symbol mode)]))))))

@@ -1,9 +1,22 @@
 #lang racket/base
 (provide vector-add! vector-search)
-(require json net/http-client racket/math "openai-client.rkt" net/url racket/string racket/port racket/list "debug.rkt")
+(require json net/http-client racket/math "openai-client.rkt" net/url racket/string racket/port racket/list "debug.rkt" racket/file)
 
 (define VEC-DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "vectors.json"))
 (define DB (make-hash)) ;; id -> (hash 'text "..." 'vec '(...))
+
+(define (save-vec-db!)
+  (make-directory* (build-path (find-system-path 'home-dir) ".agentd"))
+  (call-with-output-file VEC-DB-PATH
+    (λ (out) (write-json (for/hash ([(k v) (in-hash DB)]) (values k v)) out))
+    #:exists 'truncate/replace))
+
+(define (load-vec-db!)
+  (when (file-exists? VEC-DB-PATH)
+    (with-handlers ([exn:fail? (λ (e) (log-debug 1 'vector "Load failed: ~a" (exn-message e)))])
+      (define loaded (call-with-input-file VEC-DB-PATH read-json))
+      (for ([(k v) (in-hash loaded)])
+        (hash-set! DB k v)))))
 
 ;; Helper: Cosine Similarity
 (define (cosine-sim v1 v2)
@@ -33,6 +46,7 @@
   (define vec (get-embedding text key base))
   (define id (number->string (current-milliseconds)))
   (hash-set! DB id (hash 'text text 'vec vec))
+  (save-vec-db!)
   "Stored.")
 
 (define (vector-search query key [base "https://api.openai.com/v1"] [top-k 3])
@@ -44,3 +58,6 @@
   (define res (take (sort scored > #:key car) (min top-k (hash-count DB))))
   (log-debug 2 'vector "Found ~a matches." (length res))
   res)
+
+;; Initialize
+(load-vec-db!)

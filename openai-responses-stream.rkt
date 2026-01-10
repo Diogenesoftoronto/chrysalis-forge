@@ -30,6 +30,7 @@
   (define-values (status _ in) (http-conn-recv! hc #:method "POST" #:close? #f))
   (define pending (make-hash)) 
   (define final-usage (hash))
+  (define full-content '())
 
   (let loop ()
     (when (cancelled?) (http-conn-close! hc))
@@ -46,23 +47,41 @@
 
        (unless (empty? (hash-ref j 'choices)) 
          (define delta (hash-ref (first (hash-ref j 'choices)) 'delta (hash)))
-         (when (hash-has-key? delta 'content) (emit! (hash-ref delta 'content)))
+         (when (hash-has-key? delta 'content) 
+           (define c (hash-ref delta 'content))
+           (set! full-content (cons c full-content))
+           (emit! c))
          (when (hash-has-key? delta 'tool_calls)
            (for ([tc (hash-ref delta 'tool_calls)])
              (define idx (hash-ref tc 'index))
              (define cur (hash-ref pending idx (hash 'args "")))
              (when (hash-has-key? tc 'id) (set! cur (hash-set cur 'id (hash-ref tc 'id))))
-             (when (hash-has-key? tc 'function) (define fn (hash-ref tc 'function)) (when (hash-has-key? fn 'name) (set! cur (hash-set cur 'name (hash-ref fn 'name)))) (set! cur (hash-set cur 'args (string-append (hash-ref cur 'args) (hash-ref fn 'arguments "")))))
+             (when (hash-has-key? tc 'function) 
+               (define fn (hash-ref tc 'function)) 
+               (when (hash-has-key? fn 'name) (set! cur (hash-set cur 'name (hash-ref fn 'name)))) 
+               (set! cur (hash-set cur 'args (string-append (hash-ref cur 'args) (hash-ref fn 'arguments "")))))
              (hash-set! pending idx cur))))
        (loop)]
       [else (loop)]))
   
+  (define assistant-content (string-join (reverse full-content) ""))
+  (define tool-calls 
+    (for/list ([i (sort (hash-keys pending) <)])
+      (define v (hash-ref pending i))
+      (hash 'id (hash-ref v 'id) 'type "function" 'function (hash 'name (hash-ref v 'name) 'arguments (hash-ref v 'args)))))
+
+  (define assistant-msg 
+    (if (null? tool-calls)
+        (hash 'role "assistant" 'content assistant-content)
+        (hash 'role "assistant" 'content (if (string=? assistant-content "") (json-null) assistant-content) 'tool_calls tool-calls)))
+
   (define tool-results 
-    (for/list ([(_ v) (in-hash pending)])
+    (for/list ([i (sort (hash-keys pending) <)])
+      (define v (hash-ref pending i))
       (define id (hash-ref v 'id))
       (define name (hash-ref v 'name))
       (define args (with-handlers ([exn:fail? (λ (_) (hash))]) (string->jsexpr (hash-ref v 'args))))
       (define res (tool-run name args))
       (hash 'tool_call_id id 'role "tool" 'name name 'content (if (string? res) res (jsexpr->string res)))))
   
-  (values tool-results final-usage))
+  (values assistant-msg tool-results final-usage))

@@ -14,15 +14,15 @@
 
 (test-case "Image Generator"
   (define gen (make-openai-image-generator #:api-key "test"))
-  (check-procedure? gen))
+  (check-pred procedure? gen))
 
 (test-case "DSPy - Multimodal Prompt"
-  (define m (Predict (signature Test (in app image) (out result))))
-  (define ctx (Ctx "System" "" "" 'ask))
+  (define m (Predict (signature Test (in [app string?] [image string?]) (out [result string?]))))
+  (define context (ctx #:system "System" #:memory "" #:tool-hints "" #:mode 'ask))
   
   ;; Text only
   (define inputs-text (hash 'app "MyApp" 'image "No Image"))
-  (define res-text (render-prompt m ctx inputs-text))
+  (define res-text (render-prompt m context inputs-text))
   (check-true (string? res-text))
   
   ;; With Image URL
@@ -38,5 +38,5 @@
            (values #t "{ \"result\": \"Valid\" }" (hash)))
         (values #f "Expected list" (hash))))
         
-  (define res (run-module m ctx inputs-image mock-send-verify))
+  (define res (run-module m context inputs-image mock-send-verify))
   (check-equal? (hash-ref (RunResult-outputs res) 'result) "Valid"))
