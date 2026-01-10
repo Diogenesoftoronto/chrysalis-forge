@@ -28,15 +28,23 @@
         [else (format "~a" prompt)]))
     
     (define payload (jsexpr->bytes (hash 'model model 'response_format (hash 'type "json_object") 'messages (list (hash 'role "user" 'content content)))))
+    (define start-time (current-inexact-milliseconds))
     (define s-thread (start-spinner! "Thinking...")) ;; User feedback
     (define-values (status _ in) (http-sendrecv host safe-endpoint #:port port #:method "POST" #:headers headers #:data payload #:ssl? ssl?))
     (stop-spinner! s-thread)
-    (define res (bytes->jsexpr (port->bytes in)))
+    (define end-time (current-inexact-milliseconds))
+    
+    (define res-bytes (port->bytes in))
     (close-input-port in)
+    (define res (bytes->jsexpr res-bytes))
+    
     (if (string-prefix? (bytes->string/utf-8 status) "HTTP/1.1 200")
-        (values #t 
-                (hash-ref (hash-ref (first (hash-ref res 'choices)) 'message) 'content) 
-                (hash-ref res 'usage (hash))) ; Return usage metrics
+        (let ([meta (hash-copy (hash-ref res 'usage (hash)))])
+          (hash-set! meta 'elapsed_ms (- end-time start-time))
+          (hash-set! meta 'model model)
+          (values #t 
+                  (hash-ref (hash-ref (first (hash-ref res 'choices)) 'message) 'content) 
+                  meta))
         (values #f (format "Error: ~a" res) (hash)))))
 
 (define (validate-api-key [key #f] [base "https://api.openai.com/v1"])

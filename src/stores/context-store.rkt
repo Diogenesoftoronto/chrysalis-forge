@@ -6,17 +6,17 @@
 (define DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "context.json"))
 
 (define (json->ctx j)
-  (Ctx (hash-ref j 'system) (hash-ref j 'memory) (hash-ref j 'tool_hints) (string->symbol (hash-ref j 'mode "ask")) (hash-ref j 'history '()) (hash-ref j 'compacted_summary "")))
+  (Ctx (hash-ref j 'system) (hash-ref j 'memory) (hash-ref j 'tool_hints) (string->symbol (hash-ref j 'mode "ask")) (string->symbol (hash-ref j 'priority "best")) (hash-ref j 'history '()) (hash-ref j 'compacted_summary "")))
 
 (define (ctx->json c)
-  (hash 'system (Ctx-system c) 'memory (Ctx-memory c) 'tool_hints (Ctx-tool-hints c) 'mode (symbol->string (Ctx-mode c)) 'history (Ctx-history c) 'compacted_summary (Ctx-compacted-summary c)))
+  (hash 'system (Ctx-system c) 'memory (Ctx-memory c) 'tool_hints (Ctx-tool-hints c) 'mode (symbol->string (Ctx-mode c)) 'priority (symbol->string (Ctx-priority c)) 'history (Ctx-history c) 'compacted_summary (Ctx-compacted-summary c)))
 
 (define (load-ctx)
   (if (file-exists? DB-PATH)
       (let ([db (call-with-input-file DB-PATH (λ (in) (read-json in)))])
         (hash 'active (string->symbol (hash-ref db 'active))
               'items (for/hash ([(k v) (hash-ref db 'items)]) (values k (json->ctx v)))))
-      (hash 'active 'default 'items (hash 'default (Ctx (default-system-prompt) "" "" 'ask '() "")))))
+      (hash 'active 'default 'items (hash 'default (Ctx (default-system-prompt) "" "" 'ask 'best '() "")))))
 
 (define (default-system-prompt)
   (format #<<EOF
@@ -81,7 +81,7 @@ EOF
   (define items (hash-ref db 'items))
   (if (hash-has-key? items (string->symbol name))
       (error "Session already exists")
-      (save-ctx! (hash-set db 'items (hash-set items (string->symbol name) (Ctx (default-system-prompt) "" "" mode '() ""))))))
+      (save-ctx! (hash-set db 'items (hash-set items (string->symbol name) (Ctx (default-system-prompt) "" "" mode 'best '() ""))))))
 
 (define (session-switch! name)
   (define db (load-ctx))
