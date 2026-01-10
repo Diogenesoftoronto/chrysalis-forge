@@ -2,11 +2,35 @@
 
 (provide make-acp-tools execute-acp-tool)
 (require json racket/file racket/string racket/system racket/list racket/port racket/match racket/path
-         "eval-store.rkt" "optimizer-gepa.rkt")
+         "eval-store.rkt" "optimizer-gepa.rkt" "mcp-client.rkt")
+
+(define mcp-clients (make-hash))
+(define mcp-tool-map (make-hash))
+
+(define (register-mcp-server! name command args)
+  (define client (mcp-connect name command args))
+  (hash-set! mcp-clients name client)
+  (for ([t (mcp-client-tools client)])
+    (hash-set! mcp-tool-map (hash-ref t 'name) client))
+  (format "Connected to MCP server '~a'. Added tools: ~a" 
+          name 
+          (string-join (map (λ (t) (hash-ref t 'name)) (mcp-client-tools client)) ", ")))
 
 ;; Tool definitions for the agent
 (define (make-acp-tools)
+  (append
   (list
+   ;; MCP Tool
+   (hash 'type "function"
+         'function (hash 'name "add_mcp_server"
+                         'description "Connect a new MCP (Model Context Protocol) server to add its tools to the agent."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'name (hash 'type "string" 'description "Unique name for the server")
+                                                             'command (hash 'type "string" 'description "Executable command (e.g. 'npx', 'python')")
+                                                             'args (hash 'type "array" 
+                                                                         'items (hash 'type "string")
+                                                                         'description "Arguments for the command"))
+                                           'required '("name" "command" "args"))))
    ;; File tools
    (hash 'type "function"
          'function (hash 'name "read_file"
@@ -187,7 +211,15 @@
                                                              'success (hash 'type "boolean" 'description "Whether task succeeded")
                                                              'task_type (hash 'type "string" 'description "Category of task")
                                                              'feedback (hash 'type "string" 'description "Additional feedback"))
-                                           'required '("task_id" "success"))))))
+                                           'required '("task_id" "success")))))
+   ;; Dynamic MCP tools
+   (for/list ([client (in-hash-values mcp-clients)]
+              #:when #t
+              [t (mcp-client-tools client)])
+     (hash 'type "function"
+           'function (hash 'name (hash-ref t 'name)
+                           'description (hash-ref t 'description "")
+                           'parameters (hash-ref t 'inputSchema (hash 'type "object" 'properties (hash))))))))
 
 ;; Execute a tool by name
 (define (execute-acp-tool name args security-level)
@@ -334,8 +366,20 @@
                   #:task-type (hash-ref args 'task_type "unknown")
                   #:feedback (hash-ref args 'feedback ""))
        "Feedback logged for learning."]
+
+       ["add_mcp_server"
+        (if (>= security-level 2)
+            (register-mcp-server! (hash-ref args 'name)
+                                  (hash-ref args 'command)
+                                  (hash-ref args 'args))
+            "Permission Denied: Requires security level 2.")]
       
-      [_ (format "Unknown tool: ~a" name)])))
+      [_ 
+       (cond
+         [(hash-has-key? mcp-tool-map name)
+          (define client (hash-ref mcp-tool-map name))
+          (mcp-call-tool client name args)]
+         [else (format "Unknown tool: ~a" name)])])))
 
 ;; Implementation: Patch a file at specific line range
 (define (patch-file-impl path start-line end-line replacement)

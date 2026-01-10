@@ -18,11 +18,11 @@
   (list
    (hash 'type "function"
          'function (hash 'name "web_search"
-                         'description "Search the web using Exa AI (semantic search). Falls back to curl if no API key."
+                         'description "Search the web using Exa AI. Falls back to curl if no API key."
                          'parameters (hash 'type "object"
                                            'properties (hash 'query (hash 'type "string" 'description "Search query")
                                                              'num_results (hash 'type "integer" 'description "Number of results (default 5)")
-                                                             'type (hash 'type "string" 'description "Search type: 'neural' (semantic) or 'keyword' (default: neural)")
+                                                             'type (hash 'type "string" 'description "Search type: 'auto' (default), 'neural', 'keyword', 'fast', 'deep'")
                                                              'include_text (hash 'type "boolean" 'description "Include page text in results"))
                                            'required '("query"))))
    (hash 'type "function"
@@ -52,7 +52,7 @@
   (define api-key (get-exa-key))
   (define query (hash-ref args 'query))
   (define num-results (hash-ref args 'num_results 5))
-  (define search-type (hash-ref args 'type "neural"))
+  (define search-type (hash-ref args 'type "auto"))
   (define include-text? (hash-ref args 'include_text #f))
   
   (if api-key
@@ -96,18 +96,25 @@
 (define (format-exa-results json-str)
   (with-handlers ([exn:fail? (λ (e) (format "Parse error: ~a\nRaw: ~a" (exn-message e) json-str))])
     (define data (string->jsexpr json-str))
-    (define results (hash-ref data 'results '()))
-    (if (null? results)
-        "No results found."
-        (string-join
-         (for/list ([r results] [i (in-naturals 1)])
-           (format "~a. ~a\n   ~a\n   ~a"
-                   i
-                   (hash-ref r 'title "Untitled")
-                   (hash-ref r 'url "")
-                   (let ([text (hash-ref r 'text #f)])
-                     (if text (string-truncate text 200) ""))))
-         "\n\n"))))
+    
+    (cond
+      [(hash-has-key? data 'error) 
+       (format "Exa API Error: ~a" (hash-ref data 'error))]
+      [(hash-has-key? data 'message) 
+       (format "Exa API Message: ~a" (hash-ref data 'message))]
+      [else
+       (define results (hash-ref data 'results '()))
+       (if (null? results)
+           "No results found."
+           (string-join
+            (for/list ([r results] [i (in-naturals 1)])
+              (format "~a. ~a\n   ~a\n   ~a"
+                      i
+                      (hash-ref r 'title "Untitled")
+                      (hash-ref r 'url "")
+                      (let ([text (hash-ref r 'text #f)])
+                        (if text (string-truncate text 200) ""))))
+            "\n\n"))])))
 
 ;; String truncate helper
 (define (string-truncate s max-len)
