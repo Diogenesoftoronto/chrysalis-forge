@@ -13,7 +13,7 @@ publisher_url = "https://github.com/diogenes"
 type = "coding"
 description = "Self-evolving Racket agent with MAP-Elites optimization, natural language priority selection, and tiered security sandboxing."
 tags = ["racket", "self-evolving", "map-elites", "dspy", "agentic"]
-run_command."*" = "racket /home/diogenes/Projects/chrysalis-forge/main.rkt --acp"
+run_command."*" = "/home/diogenes/.local/share/racket/9.0/bin/agentd --acp"
 
 help = '''
 # Chrysalis Forge (agentd)
@@ -39,14 +39,14 @@ An evolvable, safety-gated Racket agent framework with DSPy-style optimization a
 
 ```bash
 # Interactive mode
-racket main.rkt -i
+agentd -i
 
 # CLI with natural language priority
-racket main.rkt --priority "cheap and fast" "Summarize this file"
-racket main.rkt --priority accurate "Review this code for security issues"
+agentd --priority "cheap and fast" "Summarize this file"
+agentd --priority accurate "Review this code for security issues"
 
 # Security levels
-racket main.rkt --perms god "Full access mode"
+agentd --perms god "Full access mode"
 ```
 
 ---
@@ -63,9 +63,9 @@ command = "cp .env.example .env && echo 'Edit .env to add your OPENAI_API_KEY'"
 description = "Create environment file from template"
 
 [actions."*".interactive]
-command = "racket main.rkt -i"
+command = "agentd -i"
 description = "Start interactive REPL mode"
 
 [actions."*".init_project]
-command = "racket main.rkt /init"
+command = "agentd /init"
 description = "Initialize agents.md for current project"
