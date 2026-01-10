@@ -3,7 +3,7 @@
          "dspy-core.rkt" "openai-responses-stream.rkt" "context-store.rkt" "openai-client.rkt"
          "acp-tools.rkt" "acp-stdio.rkt" "optimizer-gepa.rkt" "trace-store.rkt"
          "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt"
-         "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt"
+         "rdf-tools.rkt" "process-supervisor.rkt" "sandbox-exec.rkt" "debug.rkt"
          "pricing-model.rkt" "vector-store.rkt" "workflow-engine.rkt" "utils-time.rkt")
 
 (load-dotenv!)
@@ -21,7 +21,7 @@
 (define session-start-time (current-seconds))
 (define total-session-cost 0.0)
 
-(define current-security-level (make-parameter 0))
+(define current-security-level (make-parameter 1))
 
 (define ACP-MODES
   (list (hash 'slug "ask" 'name "Ask" 'description "Read only.")
@@ -301,14 +301,21 @@ EOF
 (command-line #:program "agentd" 
               #:once-each 
               [("--acp") "Run ACP" (mode-param 'acp)]
-              [("--level-1") "Read Net/FS" (current-security-level 1)]
-              [("--level-2") "Write FS" (current-security-level 2)]
-              [("--god-mode") "Full Shell" (current-security-level 3)]
+              [("--perms") p "Security Level (0, 1, 2, god)"
+                           (match p
+                             ["0" (current-security-level 0)]
+                             ["1" (current-security-level 1)]
+                             ["2" (current-security-level 2)]
+                             ["god" (current-security-level 3)]
+                             [_ (error "Invalid permission level. Use 0, 1, 2, or god.")])]
+
               [("--base-url") url "Override OpenAI API Base URL" (base-url-param url)]
               [("--model") m "Override Default Model" (model-param m)]
               [("--budget") b "Set Session Budget (USD)" (budget-param (string->number b))]
               [("--timeout") t "Set Session Timeout (e.g. 10s, 5m)" (timeout-param (parse-duration t))]
               [("--pretty") p "Output format (e.g. glow)" (pretty-param p)]
+              [("-d" "--debug") "Enable Debug Mode (Level 1)" (current-debug-level 1)]
+              [("-v" "--verbose") "Enable Verbose Debug Mode (Level 2)" (current-debug-level 2)]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
               #:args raw-args
               (match (mode-param)

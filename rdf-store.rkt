@@ -1,6 +1,6 @@
 #lang racket/base
 (provide (all-defined-out))
-(require db racket/file racket/string racket/list json)
+(require db racket/file racket/string racket/list json "debug.rkt")
 
 (define DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "graph.db"))
 
@@ -19,6 +19,7 @@
   "Loaded (Mock).")
 
 (define (rdf-query q id)
+  (log-debug 1 'rdf "Query: ~a" q)
   ;; For now, interpret simple SELECT * queries or just run raw SQL if it starts with SELECT
   (define conn (get-db))
   (define rows
@@ -31,8 +32,11 @@
     ;; Convert vector row to hash
     (hash 'result (vector->list r)))
   
-  (jsexpr->string (map row->hash rows)))
+  (define res (jsexpr->string (map row->hash rows)))
+  (log-debug 2 'rdf "Query Result size: ~a bytes" (string-length res))
+  res)
 
 (define (rdf-insert! s p o)
+  (log-debug 1 'rdf "Insert: ~a ~a ~a" s p o)
   (define conn (get-db))
   (query-exec conn "INSERT INTO triples (subject, predicate, object) VALUES (?, ?, ?)" s p o))

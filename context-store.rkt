@@ -54,7 +54,17 @@ EOF
 
 (define (ctx-get-active)
   (define db (load-ctx))
-  (hash-ref (hash-ref db 'items) (hash-ref db 'active)))
+  (define base-ctx (hash-ref (hash-ref db 'items) (hash-ref db 'active)))
+  ;; Check for project-specific rules
+  (define rules-path (build-path (current-directory) ".agentd" "rules.md"))
+  (if (file-exists? rules-path)
+      (let ([rules-content (file->string rules-path)])
+        (struct-copy Ctx base-ctx
+                     [system (string-append (Ctx-system base-ctx)
+                                            "\n\n<project_rules>\n"
+                                            rules-content
+                                            "\n</project_rules>")]))
+      base-ctx))
 
 (define (session-list)
   (define db (load-ctx))
