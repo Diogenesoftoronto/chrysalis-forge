@@ -379,7 +379,10 @@
       ["use_llm_judge"
        (define content (hash-ref args 'content))
        (define criteria (hash-ref args 'criteria))
-       (define model (hash-ref args 'model "gpt-5.2"))
+       (define model (hash-ref args 'model 
+                                (or (getenv "MODEL")
+                                    (getenv "CHRYSALIS_DEFAULT_MODEL")
+                                    "gpt-5.2")))
        (define sender (make-openai-sender #:model model))
        (define prompt (format "You are an expert judge. Evaluate the following content based on these criteria:\n\nCRITERIA:\n~a\n\nCONTENT:\n~a\n\nProvide a detailed assessment and a final verdict." criteria content))
        (define-values (ok? res usage) (sender prompt))

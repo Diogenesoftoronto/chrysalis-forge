@@ -5,39 +5,13 @@ Set Height 600
 Set Theme "catppuccin-mocha"
 Set Shell "bash"
 
-# Set PATH to include Racket bin directory so chrysalis will be available after install
-Type "export PATH=/usr/local/racket/bin:$PATH"
-Enter
-Sleep 0.5s
-
-# Install the package so chrysalis command is available
-# Change to project root (parent of .vhs directory) and install
-Type "cd .. && /usr/local/racket/bin/raco pkg install --auto --skip-installed 2>&1 | tail -3 || true"
-Enter
-Sleep 3s
-
-# Show various features
-Type "echo '=== Chrysalis Forge CLI Demo ==='"
-Enter
-Sleep 1s
-Type "chrysalis -h"
+# Overview: Show help and one example
+Type "chrysalis --help"
 Enter
 Sleep 2s
 Type "echo ''"
 Enter
 Sleep 0.5s
-Type "echo 'Priority options:'"
+Type "chrysalis --priority fast 'Write a haiku about coding'"
 Enter
-Sleep 0.5s
-Type "chrysalis --priority fast -h 2>&1 | head -5"
-Enter
-Sleep 2s
-Type "echo ''"
-Enter
-Sleep 0.5s
-Type "echo 'Security levels:'"
-Enter
-Sleep 0.5s
-Type "chrysalis --perms 1 -h 2>&1 | head -5"
-Enter
-Sleep 2s
+Sleep 5s

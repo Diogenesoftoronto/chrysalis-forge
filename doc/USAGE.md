@@ -34,6 +34,9 @@ That's the minimum. For richer functionality, you can add:
 # Custom LLM endpoint (for LiteLLM, Ollama, or other OpenAI-compatible APIs)
 OPENAI_API_BASE=http://localhost:1234/v1
 
+# Model name (if different from default)
+MODEL=gpt-4o
+
 # Exa API for neural web search (falls back to DuckDuckGo via curl otherwise)
 EXA_API_KEY=your_exa_key
 
@@ -42,6 +45,28 @@ CHRYSALIS_SECRET_KEY=your-secret-key-here
 ```
 
 The `.env.example` file in the repository documents all available options.
+
+You can also configure settings interactively using the `/config` command:
+
+```
+[USER]> /config list
+Current Configuration:
+  Model: gpt-5.2
+  Base URL: https://api.openai.com/v1
+  ...
+
+[USER]> /config model gpt-4o
+Model set to gpt-4o
+
+[USER]> /models
+Available Models:
+  - gpt-4o
+  - gpt-4o-mini
+  - gpt-4-turbo
+  ...
+```
+
+Use `/config list` to see all current settings, and `/models` to discover available models from your API endpoint.
 
 ---
 
@@ -72,12 +97,24 @@ The agent's tool usage is transparent. You see which tools it invokes and what r
 
 Several commands are available within the REPL (all start with `/`):
 
+- `/help` - Show available commands
+- `/exit`, `/quit` - Exit the session
+- `/config list` - List current configuration (model, API key status, etc.)
+- `/config <key> <value>` - Set configuration values (model, budget, priority, etc.)
+- `/models` - List available models from your API endpoint
+- `/workflows` - List available workflows
+- `/workflows show <slug>` - Show details of a specific workflow
+- `/workflows delete <slug>` - Delete a workflow
 - `/mode code` switches to full-capability mode, enabling file writes and shell commands
 - `/mode architect` enables read-only file access for code analysis
 - `/priority fast` switches to speed-optimized operation
 - `/evolve "The agent should be more concise"` triggers GEPA prompt evolution
 - `/stats` shows profile performance statistics
-- `/exit` ends the session
+- `/session list` - List all sessions
+- `/session new <name>` - Create a new session
+- `/session switch <name>` - Switch to a different session
+- `/raco <args>` - Run raco commands
+- `/init` - Initialize project and generate agents.md
 
 ### Single-Task Mode
 
@@ -425,7 +462,9 @@ The agent respects these limits, wrapping up gracefully when approaching them.
 
 ### Common Issues
 
-**"API key not found"** — Ensure `OPENAI_API_KEY` is set in your environment or `.env` file.
+**"API key not found"** — Ensure `OPENAI_API_KEY` is set in your environment or `.env` file. Use `/config list` to check your configuration, or run with `-d verbose` to see environment variable status.
+
+**"Unknown Model" or "Model not found"** — The default model may not be valid for your API endpoint. Use `/models` to list available models, then set one with `/config model <name>`.
 
 **"Permission denied"** — You're trying an operation that requires a higher security level. Use `--perms 2` or `--perms 3`.
 
@@ -433,19 +472,33 @@ The agent respects these limits, wrapping up gracefully when approaching them.
 
 **Slow responses** — Try `--priority fast` or a faster model. Check if network issues are causing API delays.
 
+**API errors (400, 404, etc.)** — The system now shows helpful error messages instead of crashing. Check:
+- Your API endpoint is correct (`/config list` shows your base URL)
+- The model name is valid for your endpoint (`/models` lists available models)
+- Your API key is valid (use `-d verbose` to verify)
+
 ### Debug Output
 
 Increase debug verbosity to see what's happening:
 
 ```bash
-agentd --debug 2 "Your task"
+chrysalis -d verbose
+# or
+chrysalis --debug verbose
 ```
 
 Debug levels:
 - 0: Minimal output (default)
 - 1: Show tool calls and major events
 - 2: Detailed logging including API calls
-- verbose: Everything, including raw payloads
+- verbose: Everything, including environment variable checks and raw payloads
+
+When using verbose debug mode (`-d verbose`), the system automatically checks all environment variables and displays:
+- ✓ Set variables with their values (API keys are partially masked)
+- ○ Optional variables that are not set (using defaults)
+- Critical errors for missing required variables (like `OPENAI_API_KEY`)
+
+This helps diagnose configuration issues quickly.
 
 ### Log Locations
 

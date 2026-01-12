@@ -5,7 +5,7 @@
          "src/tools/acp-tools.rkt" "src/core/optimizer-gepa.rkt" "src/stores/trace-store.rkt" "src/tools/rdf-tools.rkt"
          "src/core/process-supervisor.rkt" "src/tools/sandbox-exec.rkt" "src/utils/debug.rkt" "src/llm/pricing-model.rkt"
          "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt"
-         "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt")
+         "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt" "src/llm/model-registry.rkt")
 
 ;; Conditionally require service module (may not exist yet)
 (define service-available?
@@ -42,12 +42,21 @@
 
 (load-dotenv!)
 
+;; Helper to get default model from config/env/.env, with fallback
+;; Priority: 1) MODEL env var (explicit override), 2) Config system (CHRYSALIS_DEFAULT_MODEL env or config file), 3) Hardcoded default
+(define (get-default-model)
+  (or (getenv "MODEL")
+      (and service-available?
+           (with-handlers ([exn:fail? (λ (_) #f)])
+             ((dynamic-require 'chrysalis-forge/src/service/config 'config-default-model))))
+      (getenv "CHRYSALIS_DEFAULT_MODEL")
+      "gpt-5.2"))
 
 (define api-key (getenv "OPENAI_API_KEY"))
 (define env-api-key api-key)
 (define base-url-param (make-parameter (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1")))
-(define model-param (make-parameter (or (getenv "MODEL") "gpt-5.2")))
-(define vision-model-param (make-parameter (or (getenv "VISION_MODEL") "gpt-5.2")))
+(define model-param (make-parameter (get-default-model)))
+(define vision-model-param (make-parameter (or (getenv "VISION_MODEL") (get-default-model))))
 (define interactive-param (make-parameter (or (getenv "INTERACTIVE") #f)))
 (define attachments (make-parameter '())) ; List of (type content) pairs
 
@@ -88,7 +97,7 @@
   (if (member (string-downcase (or (read-line) "n")) '("y" "yes")) #t (error 'security "Denied.")))
 
 (define llm-judge-param (make-parameter (or (getenv "LLM_JUDGE") #f)))
-(define llm-judge-model-param (make-parameter (or (getenv "LLM_JUDGE_MODEL") "gpt-5.2")))
+(define llm-judge-model-param (make-parameter (or (getenv "LLM_JUDGE_MODEL") (get-default-model))))
 
 (define (evaluate-safety action content)
   (unless (llm-judge-param) (values #t "")) ;; Pass if judge not enabled
@@ -118,8 +127,8 @@
                                           "Requires Level 2.")]
     [else (match name
             ["ask_human" (printf "\n[ASK]: ~a\n> " (hash-ref args 'question)) (read-line)]
-            ["ctx_evolve" (gepa-evolve! (hash-ref args 'feedback) (hash-ref args 'model "gpt-5.2"))]
-            ["meta_evolve" (gepa-meta-evolve! (hash-ref args 'feedback) (hash-ref args 'model "gpt-5.2"))]
+            ["ctx_evolve" (gepa-evolve! (hash-ref args 'feedback) (hash-ref args 'model (get-default-model)))]
+            ["meta_evolve" (gepa-meta-evolve! (hash-ref args 'feedback) (hash-ref args 'model (get-default-model)))]
             ["run_racket" (run-tiered-code! (hash-ref args 'code) (current-security-level))]
             ["read_file" (if (or (>= (current-security-level) 1) (string-contains? (hash-ref args 'path) ".agentd/workspace")) 
                              (if (file-exists? (hash-ref args 'path)) (file->string (hash-ref args 'path)) "404") "Permission Denied.")]
@@ -348,30 +357,124 @@
           (begin (eprintf "[ERROR] API Key Validation Failed: ~a\n" msg) (exit 1))
           (printf "[WARNING] API Key Validation Failed: ~a\n" msg)))))
 
+(define (check-env-verbose!)
+  "Check all environment variables and show critical errors in verbose debug mode"
+  (when (>= (current-debug-level) 2)
+    (log-section "Environment Variables Check")
+    (define required-vars (list "OPENAI_API_KEY"))
+    (define optional-vars (list "OPENAI_API_BASE" "MODEL" "VISION_MODEL" "BUDGET" "TIMEOUT" "PRIORITY" "LLM_JUDGE" "LLM_JUDGE_MODEL" "INTERACTIVE" "PRETTY" "CHRYSALIS_PORT" "CHRYSALIS_HOST"))
+    
+    (define missing-required '())
+    (define missing-optional '())
+    
+    (for ([var required-vars])
+      (define val (getenv var))
+      (if val
+          (let ([preview (if (> (string-length val) 8) 
+                             (format "~a...~a" (substring val 0 8) (substring val (max 0 (- (string-length val) 4))))
+                             (format "~a..." (substring val 0 (min 4 (string-length val)))))])
+            (log-debug 2 'env (format "✓ ~a: SET (~a)" var preview)))
+          (begin
+            (set! missing-required (cons var missing-required))
+            (eprintf "[CRITICAL ERROR] Required environment variable ~a is NOT SET~n" var)
+            (eprintf "  Set it with: export ~a=<value>~n" var)
+            (eprintf "  Or use: /config <key> <value> in interactive mode~n"))))
+    
+    (for ([var optional-vars])
+      (define val (getenv var))
+      (if val
+          (log-debug 2 'env (format "✓ ~a: ~a" var val))
+          (begin
+            (set! missing-optional (cons var missing-optional))
+            (log-debug 2 'env (format "○ ~a: not set (using default)" var)))))
+    
+    (when (not (null? missing-required))
+      (newline)
+      (eprintf "[CRITICAL] Missing required environment variables:~n")
+      (for ([var missing-required])
+        (eprintf "  - ~a~n" var))
+      (eprintf "~nPlease set these variables before continuing.~n")
+      (eprintf "You can set them with:~n")
+      (eprintf "  export OPENAI_API_KEY=sk-...~n")
+      (eprintf "Or use the --api-key flag or /config command.~n~n"))
+    
+    (when (not (null? missing-optional))
+      (log-debug 2 'env (format "Optional variables not set: ~a" (string-join missing-optional ", "))))
+    
+    (newline)))
+
 (define (handle-slash-command cmd input)
-  (match cmd
-    [(or "exit" "quit") (print-session-summary!) (displayln "Goodbye.") (exit)]
-    ["help" (displayln "Commands:\n  /help - Show this message\n  /exit, /quit - Exit\n  /raco <args> - Run raco commands\n  /config <key> <val> - Set param\n  /init - Initialize project")]
-    ["raco" (system (format "raco ~a" (substring input 6)))]
-    ["config" 
-     (define parts (string-split (substring input 8)))
-     (if (= (length parts) 2)
-         (match (first parts)
-           ["model" (model-param (second parts)) (printf "Model set to ~a\n" (second parts))]
-           ["judge-model" (llm-judge-model-param (second parts)) (printf "Judge Model set to ~a\n" (second parts))]
-           ["budget" (budget-param (string->number (second parts))) (printf "Budget set to ~a\n" (second parts))]
-           ["priority" 
-            (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol (second parts))])))))
-            (printf "Priority set to ~a\n" (second parts))]
-           [_ (printf "Unknown config key: ~a\n" (first parts))])
-         (displayln "Usage: /config <key> <value>"))]
+  (with-handlers ([exn:fail? (λ (e)
+                                (eprintf "[ERROR] Command failed: ~a~n" (exn-message e))
+                                (eprintf "Type /help for available commands.~n"))])
+    (match cmd
+      [(or "exit" "quit") (print-session-summary!) (displayln "Goodbye.") (exit)]
+      ["help" (displayln "Commands:\n  /help - Show this message\n  /exit, /quit - Exit\n  /raco <args> - Run raco commands\n  /config list - List current config\n  /config <key> <val> - Set param\n  /models - List available models from API\n  /workflows - List workflows\n  /workflows show <slug> - Show workflow details\n  /workflows delete <slug> - Delete a workflow\n  /init - Initialize project")]
+      ["raco" 
+       (if (>= (string-length input) 6)
+           (system (format "raco ~a" (substring input 6)))
+           (displayln "Usage: /raco <args>"))]
+      ["config" 
+       (define rest (if (>= (string-length input) 8)
+                        (string-trim (substring input 8))
+                        ""))
+       (define parts (if (> (string-length rest) 0)
+                         (string-split rest)
+                         '()))
+       (cond
+         [(null? parts)
+          (displayln "Usage: /config list  OR  /config <key> <value>")]
+         [(and (= (length parts) 1) (equal? (first parts) "list"))
+        ;; List all current config values
+        (printf "Current Configuration:\n")
+        (printf "  Model: ~a\n" (model-param))
+        (printf "  Vision Model: ~a\n" (vision-model-param))
+        (printf "  Judge Model: ~a\n" (llm-judge-model-param))
+        (printf "  Base URL: ~a\n" (base-url-param))
+        (printf "  Budget: ~a\n" (if (= (budget-param) +inf.0) "unlimited" (budget-param)))
+        (printf "  Timeout: ~a\n" (if (= (timeout-param) +inf.0) "unlimited" (timeout-param)))
+        (printf "  Priority: ~a\n" (priority-param))
+        (printf "  Security Level: ~a\n" (current-security-level))
+        (printf "  LLM Judge: ~a\n" (if (llm-judge-param) "ENABLED" "DISABLED"))
+        (printf "  API Key: ~a\n" 
+                (if env-api-key 
+                    (let ([len (string-length env-api-key)])
+                      (if (> len 12)
+                          (format "~a...~a" (substring env-api-key 0 8) (substring env-api-key (- len 4)))
+                          (format "~a..." (substring env-api-key 0 (min 4 len)))))
+                    "NOT SET"))
+        (printf "  Interactive: ~a\n" (if (interactive-param) "YES" "NO"))
+        (printf "  Pretty: ~a\n" (pretty-param))
+          (printf "  Debug Level: ~a\n" (current-debug-level))]
+         [(= (length parts) 2)
+        (define key (first parts))
+        (define valid-keys '("model" "vision-model" "judge-model" "budget" "priority"))
+        (match key
+          ["model" (model-param (second parts)) (printf "Model set to ~a\n" (second parts))]
+          ["vision-model" (vision-model-param (second parts)) (printf "Vision Model set to ~a\n" (second parts))]
+          ["judge-model" (llm-judge-model-param (second parts)) (printf "Judge Model set to ~a\n" (second parts))]
+          ["budget" (budget-param (string->number (second parts))) (printf "Budget set to ~a\n" (second parts))]
+          ["priority" 
+           (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol (second parts))])))))
+           (printf "Priority set to ~a\n" (second parts))]
+          [_ 
+           (define suggestions (filter (λ (k) (<= (levenshtein key k) 2)) valid-keys))
+           (if (not (null? suggestions))
+               (printf "Unknown config key: ~a\nDid you mean: ~a?\n" key (string-join suggestions ", "))
+               (printf "Unknown config key: ~a\nValid keys: ~a\n" key (string-join valid-keys ", ")))])]
+         [else (displayln "Usage: /config list  OR  /config <key> <value>")])]
 
     ["judge"
       (llm-judge-param (not (llm-judge-param)))
       (printf "LLM Security Judge: ~a\n" (if (llm-judge-param) "ENABLED" "DISABLED"))]
 
     ["session"
-     (define parts (string-split (string-trim (substring input 8))))
+     (define rest (if (>= (string-length input) 8)
+                      (string-trim (substring input 8))
+                      ""))
+     (define parts (if (> (string-length rest) 0)
+                       (string-split rest)
+                       '()))
      (if (>= (length parts) 1)
          (match (first parts)
            ["list" 
@@ -402,19 +505,86 @@
          (displayln "Usage: /session <list|new|switch|delete> ..."))]
 
     [(or "attach" "file")
-     (define path (string-trim (substring input (if (string-prefix? input "/attach") 8 6))))
+     (define start-idx (if (string-prefix? input "/attach") 8 6))
+     (define path (if (>= (string-length input) start-idx)
+                      (string-trim (substring input start-idx))
+                      ""))
      (if (file-exists? path)
          (begin
            (attachments (cons (list 'file path (file->string path)) (attachments)))
            (printf "Attached file: ~a\n" path))
          (printf "File not found: ~a\n" path))]
     ["image"
-     (define path (string-trim (substring input 7)))
+     (define path (if (>= (string-length input) 7)
+                      (string-trim (substring input 7))
+                      ""))
      (begin
        ;; In a real app we'd base64 encode here, for now assuming path or URL
        ;; For local files, we'd need to implementing base64 reading.
        (attachments (cons (list 'image path) (attachments)))
        (printf "Attached image: ~a\n" path))]
+    ["models"
+     (printf "Fetching available models from ~a...\n" (base-url-param))
+     (with-handlers ([exn:fail? (λ (e)
+                                   (eprintf "[ERROR] Failed to fetch models: ~a\n" (exn-message e))
+                                   (eprintf "Check your API endpoint and key configuration.\n"))])
+       (define models (fetch-models-from-endpoint (base-url-param) api-key))
+       (if (null? models)
+           (printf "No models found. The API endpoint may not support model listing.\n")
+           (begin
+             (printf "\nAvailable Models:\n")
+             (for ([m models])
+               (define model-id (cond
+                                  [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
+                                  [(string? m) m]
+                                  [else "unknown"]))
+               (printf "  - ~a\n" model-id))
+             (printf "\nUse '/config model <name>' to set a model.\n"))))]
+    
+    ["workflows"
+     (define rest (if (>= (string-length input) 10)
+                      (string-trim (substring input 10))
+                      ""))
+     (define parts (if (> (string-length rest) 0)
+                       (string-split rest)
+                       '()))
+     (cond
+       [(or (null? parts) (equal? (first parts) "list"))
+        ;; List all workflows
+        (with-handlers ([exn:fail? (λ (e)
+                                      (eprintf "[ERROR] Failed to list workflows: ~a\n" (exn-message e)))])
+          (define workflows-json (workflow-list))
+          (define workflows (string->jsexpr workflows-json))
+          (if (null? workflows)
+              (printf "No workflows found. Use workflow tools to create workflows.\n")
+              (begin
+                (printf "\nAvailable Workflows:\n")
+                (for ([w workflows])
+                  (define slug (hash-ref w 'slug "unknown"))
+                  (define desc (hash-ref w 'description "No description"))
+                  (printf "  ~a - ~a\n" slug desc))
+                (printf "\nUse '/workflows show <slug>' to view a workflow.\n"))))]
+       [(and (>= (length parts) 2) (equal? (first parts) "show"))
+        ;; Show workflow details
+        (define slug (second parts))
+        (with-handlers ([exn:fail? (λ (e)
+                                      (eprintf "[ERROR] Failed to get workflow: ~a\n" (exn-message e)))])
+          (define content (workflow-get slug))
+          (if (equal? content "null")
+              (printf "Workflow '~a' not found.\n" slug)
+              (begin
+                (printf "\nWorkflow: ~a\n" slug)
+                (printf "Content:\n~a\n" content))))]
+       [(and (>= (length parts) 2) (equal? (first parts) "delete"))
+        ;; Delete workflow
+        (define slug (second parts))
+        (with-handlers ([exn:fail? (λ (e)
+                                      (eprintf "[ERROR] Failed to delete workflow: ~a\n" (exn-message e)))])
+          (define result (workflow-delete slug))
+          (printf "~a\n" result))]
+       [else
+        (displayln "Usage: /workflows [list|show <slug>|delete <slug>]")])]
+    
     ["init"
      (printf "Initializing agent for project...\n")
      (define init-prompt (format #<<EOF
@@ -448,12 +618,12 @@ Analyze this codebase and create/update **agents.md** to help future agents work
 EOF
 ))
      (acp-run-turn "cli" init-prompt (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))]
-    [_ 
-     (define candidates '("exit" "quit" "help" "raco" "config" "init"))
-     (define suggestions (filter (λ (c) (<= (levenshtein cmd c) 2)) candidates))
-     (if (not (null? suggestions))
-         (printf "Unknown command '/~a'. Did you mean: /~a?\n" cmd (string-join suggestions ", /"))
-         (printf "Unknown command '/~a'. Type /help for list.\n" cmd))]))
+      [_ 
+       (define candidates '("exit" "quit" "help" "raco" "config" "models" "workflows" "init"))
+       (define suggestions (filter (λ (c) (<= (levenshtein cmd c) 2)) candidates))
+       (if (not (null? suggestions))
+           (printf "Unknown command '/~a'. Did you mean: /~a?\n" cmd (string-join suggestions ", /"))
+           (printf "Unknown command '/~a'. Type /help for list.\n" cmd))])))
 
 (define (format-duration seconds)
   (define mins (quotient seconds 60))
@@ -546,6 +716,7 @@ EOF
   (displayln "──────────────────────────────────────────────────────────────────────────"))
 
 (define (repl-loop)
+  (check-env-verbose!)
   (verify-env! #:fail #f)
   (display-figlet-banner "chrysalis forge" "rozzo")
   (newline)
@@ -560,7 +731,10 @@ EOF
          (define cmd (first (string-split (substring input 1))))
          (handle-slash-command cmd input)]
         [else
-         (acp-run-turn "cli" input (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))])
+         (with-handlers ([exn:fail? (λ (e)
+                                       (eprintf "\n[ERROR] ~a\n" (exn-message e))
+                                       (eprintf "The REPL will continue. Use /models to list available models.\n"))])
+           (acp-run-turn "cli" input (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f)))])
       (loop))))
 
 (define mode-param (make-parameter 'run))
@@ -600,6 +774,7 @@ EOF
               (match (mode-param)
                 ['run (begin
                         (set! session-start-time (current-seconds)) ;; Reset start time for run
+                        (check-env-verbose!)
                         (if (or (interactive-param) (null? raw-args))
                           (repl-loop)
                           (begin

@@ -6,6 +6,7 @@
 
 (require racket/string racket/match json racket/port racket/date racket/list)
 (require "config.rkt" "db.rkt" "auth.rkt" (except-in "key-vault.rkt" sha256-bytes))
+(require "../llm/model-registry.rkt")
 
 ;; ============================================================================
 ;; HTTP Response Helpers
@@ -404,12 +405,30 @@
 ;; ============================================================================
 
 (define (handle-list-models request)
-  "GET /v1/models - List available models"
-  (json-response
-   (hash 'data (for/list ([model (config-allowed-models)])
-                 (hash 'id model
-                       'object "model"
-                       'owned_by "chrysalis-forge")))))
+  "GET /v1/models - List available models from OpenAI"
+  (with-handlers ([exn:fail? (λ (e) 
+                               (error-response (format "Failed to fetch models: ~a" (exn-message e)) 
+                                               #:status 500))])
+    ;; Get OpenAI API key and base URL
+    (define api-key (get-service-key "openai"))
+    (define base-url (get-service-base-url "openai"))
+    
+    (unless api-key
+      (return (error-response "OpenAI API key not configured. Set OPENAI_API_KEY environment variable." 
+                              #:status 500)))
+    
+    ;; Fetch models from OpenAI endpoint
+    (define models (fetch-models-from-endpoint base-url api-key))
+    
+    ;; Return in OpenAI-compatible format
+    (json-response
+     (hash 'data (if (and (list? models) (> (length models) 0))
+                      models
+                      ;; Fallback to config if fetch fails or returns empty
+                      (for/list ([model (config-allowed-models)])
+                        (hash 'id model
+                              'object "model"
+                              'owned_by "chrysalis-forge")))))))
 
 ;; ============================================================================
 ;; Health Check

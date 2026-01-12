@@ -8,7 +8,9 @@
          racket/hash
          racket/set
          racket/path
-         "pricing-model.rkt")
+         racket/port
+         "pricing-model.rkt"
+         "../utils/debug.rkt")
 
 (provide (struct-out ModelCapabilities)
          (struct-out ModelStats)
@@ -56,43 +58,140 @@
     [(string-contains? base-url "api.anthropic.com") 'anthropic]
     [(string-contains? base-url "api.together.xyz") 'together]
     [(string-contains? base-url "api.groq.com") 'groq]
+    [(string-contains? base-url "backboard.io") 'backboard]
     [else 'custom]))
 
 (define (fetch-models-from-endpoint base-url api-key)
   (with-handlers ([exn:fail? (λ (e) 
-                               (log-warning "Model fetch failed for ~a: ~a" base-url (exn-message e))
-                               '())])
+                               ;; Re-throw with context - caller will handle display
+                               (error (format "Failed to fetch models: ~a" (exn-message e))))])
+    ;; Validate API key is present and not empty
+    (unless (and api-key (string? api-key) (> (string-length api-key) 0))
+      (error "API key is required but not provided or is empty"))
+    
+    (define provider (detect-provider base-url))
     (define clean-base (if (string-suffix? base-url "/")
                            (substring base-url 0 (sub1 (string-length base-url)))
                            base-url))
-    (define models-url (string-append clean-base "/models"))
+    
+    ;; Build URL and path based on provider
+    ;; For Backboard, check if base already includes /api, if so use /models, otherwise use /api/models
+    ;; Don't use min_context/max_context filters as they're too restrictive (most models have context_limit > 1)
+    (define models-url
+      (if (eq? provider 'backboard)
+          (let ([has-api? (string-contains? clean-base "/api")])
+            (if has-api?
+                (string-append clean-base "/models?skip=0&limit=100")
+                (string-append clean-base "/api/models?skip=0&limit=100")))
+          (string-append clean-base "/models")))
+    
     (define parsed-url (string->url models-url))
     (define host (url-host parsed-url))
     (define port (or (url-port parsed-url) (if (equal? (url-scheme parsed-url) "https") 443 80)))
-    (define path-part (let ([p (url-path parsed-url)])
-                        (if (null? p) "/models"
-                            (string-append "/" (string-join (map path/param-path p) "/")))))
+    
+    ;; Build full path including query string
+    (define path-segments (url-path parsed-url))
+    (define path-part (if (null? path-segments)
+                          "/models"
+                          (string-append "/" (string-join (map path/param-path path-segments) "/"))))
+    
+    ;; Add query string if present
+    (define query-list (url-query parsed-url))
+    (define (query-value->string v)
+      (cond
+        [(string? v) v]
+        [(bytes? v) (bytes->string/utf-8 v)]
+        [(symbol? v) (symbol->string v)]
+        [else (format "~a" v)]))
+    (define full-path (if (and query-list (not (null? query-list)))
+                          (string-append path-part "?" 
+                                       (string-join (for/list ([q query-list])
+                                                      (format "~a=~a" 
+                                                              (query-value->string (car q))
+                                                              (query-value->string (cdr q))))
+                                                    "&"))
+                          path-part))
+    
+    ;; Use appropriate header format based on provider
+    (define auth-header
+      (cond
+        [(eq? provider 'backboard)
+         (format "X-API-Key: ~a" api-key)]
+        [else
+         (format "Authorization: Bearer ~a" api-key)]))
+    
+    (define request-headers (list auth-header
+                                 "Content-Type: application/json"))
+    
+    ;; Helper to mask API key in logs
+    (define (mask-api-key header-str)
+      (cond
+        [(string-contains? header-str "X-API-Key:")
+         (string-replace header-str api-key (if (> (string-length api-key) 8)
+                                                 (format "~a...~a" (substring api-key 0 4) (substring api-key (- (string-length api-key) 4)))
+                                                 "***"))]
+        [(string-contains? header-str "Authorization: Bearer")
+         (string-replace header-str api-key (if (> (string-length api-key) 8)
+                                                 (format "~a...~a" (substring api-key 0 4) (substring api-key (- (string-length api-key) 4)))
+                                                 "***"))]
+        [else header-str]))
+    
+    ;; Log raw request details in verbose mode
+    (log-debug 2 'models 
+               "HTTP Request:\n  Method: GET\n  URL: ~a\n  Host: ~a\n  Port: ~a\n  Path: ~a\n  SSL: ~a\n  Headers:\n~a"
+               models-url
+               host
+               port
+               full-path
+               (equal? (url-scheme parsed-url) "https")
+               (string-join (map (λ (h) (format "    ~a" (mask-api-key h))) request-headers) "\n"))
     
     (define-values (status headers in)
-      (http-sendrecv host path-part
+      (http-sendrecv host full-path
                      #:port port
                      #:ssl? (equal? (url-scheme parsed-url) "https")
                      #:method "GET"
-                     #:headers (if api-key
-                                   (list (format "Authorization: Bearer ~a" api-key)
-                                         "Content-Type: application/json")
-                                   '("Content-Type: application/json"))))
+                     #:headers request-headers))
     
-    (define response (read-json in))
-    (close-input-port in)
+    (define status-str (bytes->string/utf-8 status))
+    (log-debug 2 'models "HTTP Response: ~a" status-str)
+    (unless (string-prefix? status-str "HTTP/1.1 200")
+      (when (and in (input-port? in))
+        (close-input-port in))
+      (error (format "HTTP ~a: The /models endpoint may not be available at ~a" status-str models-url)))
     
-    (cond
-      [(and (hash? response) (hash-has-key? response 'data))
-       (hash-ref response 'data)]
-      [(and (hash? response) (hash-has-key? response 'models))
-       (hash-ref response 'models)]
-      [(list? response) response]
-      [else '()])))
+    ;; Read response body for logging
+    (define response-body (port->string in))
+    (log-debug 2 'models "Response Body:\n~a" response-body)
+    
+    (define response (with-handlers ([exn:fail? (λ (e)
+                                                   (log-debug 2 'models "Failed to parse JSON: ~a" (exn-message e))
+                                                   (error (format "Failed to parse response: ~a" (exn-message e))))])
+                       (read-json (open-input-string response-body))))
+    
+    (log-debug 2 'models "Parsed Response Type: ~a" (if (hash? response) "hash" (if (list? response) "list" "other")))
+    (when (hash? response)
+      (log-debug 2 'models "Response Keys: ~a" (hash-keys response)))
+    
+    (define models-list
+      (cond
+        [(and (hash? response) (hash-has-key? response 'data))
+         (define data (hash-ref response 'data))
+         (log-debug 2 'models "Found models in 'data' key: ~a items" (if (list? data) (length data) "not a list"))
+         data]
+        [(and (hash? response) (hash-has-key? response 'models))
+         (define models (hash-ref response 'models))
+         (log-debug 2 'models "Found models in 'models' key: ~a items" (if (list? models) (length models) "not a list"))
+         models]
+        [(list? response)
+         (log-debug 2 'models "Response is a list: ~a items" (length response))
+         response]
+        [else
+         (log-debug 2 'models "No recognized response format, returning empty list")
+         '()]))
+    
+    (log-debug 2 'models "Final models list: ~a items" (length models-list))
+    models-list))
 
 (define (infer-capabilities-from-id id)
   (define id-lower (string-downcase id))
@@ -193,13 +292,31 @@
     [else "general purpose"]))
 
 (define (parse-model-from-api model-hash provider)
-  (define id (hash-ref model-hash 'id "unknown"))
+  ;; Handle different API response formats (some use 'name, some use 'id)
+  (define id (or (hash-ref model-hash 'id #f)
+                 (hash-ref model-hash 'name #f)
+                 "unknown"))
   (define inferred (infer-capabilities-from-id id))
   
+  ;; Handle different field names for context window
   (define context-window
     (or (hash-ref model-hash 'context_window #f)
         (hash-ref model-hash 'context_length #f)
+        (hash-ref model-hash 'context_limit #f)
+        (hash-ref model-hash 'max_context #f)
         (get-default-context-window id)))
+  
+  ;; Handle different field names for tools support
+  (define supports-tools?
+    (or (hash-ref model-hash 'supports_tools #f)
+        (hash-ref model-hash 'supports-tools? #f)
+        (hash-ref inferred 'supports-tools?)))
+  
+  ;; Handle different field names for vision support
+  (define supports-vision?
+    (or (hash-ref model-hash 'supports_vision #f)
+        (hash-ref model-hash 'supports-vision? #f)
+        (hash-ref inferred 'supports-vision?)))
   
   (define description
     (or (hash-ref model-hash 'description #f)
@@ -213,8 +330,8 @@
    (hash-ref inferred 'coding)
    (hash-ref inferred 'speed)
    (hash-ref inferred 'cost-tier)
-   (hash-ref inferred 'supports-tools?)
-   (hash-ref inferred 'supports-vision?)
+   supports-tools?
+   supports-vision?
    (infer-best-for id)
    description))
 
