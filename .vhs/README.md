@@ -4,7 +4,7 @@ This directory contains [vhs](https://github.com/charmbracelet/vhs) scripts for 
 
 ## Prerequisites
 
-- [vhs](https://github.com/charmbracelet/vhs) installed (`go install github.com/charmbracelet/vhs@latest`)https://freenet.org/resources/manual/tutorial/
+- [vhs](https://github.com/charmbracelet/vhs) installed (`go install github.com/charmbracelet/vhs@latest`)
 - `ffmpeg` installed
 - `ttyd` installed (optional, but recommended)
 
@@ -18,7 +18,7 @@ This directory contains [vhs](https://github.com/charmbracelet/vhs) scripts for 
 
 ## Regenerating GIFs
 
-**Note**: Make sure `chrysalis` is installed via `raco pkg install` before generating GIFs. The scripts use the `chrysalis` binary command, not `racket main.rkt`.
+**Note**: The scripts automatically install the package using `raco pkg install --auto` at the start, so the `chrysalis` command will be available. The scripts assume they are run from the project root directory (or the `.vhs` subdirectory).
 
 To regenerate all GIFs:
 

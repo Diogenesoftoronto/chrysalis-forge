@@ -1,193 +1,116 @@
 # Theoretical Foundations of Chrysalis Forge
 
-> **Chrysalis Forge synthesizes ideas from evolutionary computation, geometric representation learning, reliable multi-agent systems, and temporal knowledge management into a unified framework for building self-improving AI agents.**
+Chrysalis Forge emerges from a confluence of research threads that have, in recent years, begun to reshape how we think about building intelligent systems. Rather than treating large language models as monolithic oracles to be prompted and hoped for the best, this framework treats them as components in a larger evolutionary and geometric system—one that learns, adapts, and improves through principled mechanisms borrowed from evolutionary computation, differential geometry, and distributed systems theory.
 
-This document explains the research papers and concepts that inspired Chrysalis Forge, written for researchers, students, and developers who want to understand the theoretical underpinnings of the system.
-
----
-
-## Table of Contents
-
-1. [GEPA: Reflective Prompt Evolution](#1-gepa-reflective-prompt-evolution)
-2. [MAP-Elites and Quality-Diversity Optimization](#2-map-elites-and-quality-diversity-optimization)
-3. [Grassmann Flows and Geometric Attention](#3-grassmann-flows-and-geometric-attention)
-4. [MAKER: Extreme Decomposition for Reliability](#4-maker-extreme-decomposition-for-reliability)
-5. [Graphiti/Zep: Temporal Knowledge Graphs](#5-graphitizep-temporal-knowledge-graphs)
-6. [Recursive Language Models](#6-recursive-language-models)
-7. [DSPy Programming Model](#7-dspy-programming-model)
-8. [Synthesis: How These Ideas Combine](#synthesis-how-these-ideas-combine)
+This document is intended for researchers, graduate students, and developers who want to understand not just *what* Chrysalis Forge does, but *why* it does it that way. We trace each major component back to its theoretical roots, quote the key insights from the foundational papers, and show how these ideas manifest in the Racket implementation.
 
 ---
 
-## 1. GEPA: Reflective Prompt Evolution
+## The Problem of Prompt Optimization
 
-### Paper Reference
+Before diving into specific techniques, it's worth understanding the problem space. Large language models are remarkably sensitive to how they're prompted. The difference between a mediocre and an excellent result often comes down to subtle variations in instruction phrasing, the choice and ordering of few-shot examples, or the structural scaffolding around the task. This sensitivity creates an optimization problem: given a task, how do we find the prompt configuration that maximizes performance?
 
-**"GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning"**  
-arXiv:2507.19457 (July 2025)
+Traditional approaches have treated this as a reinforcement learning problem. Run the prompt, observe whether it succeeded or failed, use that binary signal to update. But as the GEPA authors observe, this approach squanders the richest resource we have—the model's own ability to reason about *why* something failed.
 
-### Key Insight
+---
 
-Natural language reflection provides richer learning signals than sparse RL rewards. Instead of treating prompt optimization as a bandit problem with binary success/failure signals, GEPA leverages the LLM's ability to *understand* why something failed and articulate improvements.
+## GEPA: Learning in the Space of Language
 
-### How It Works
+The GEPA paper (Agrawal et al., 2025) makes a provocative claim that cuts against the prevailing wisdom in LLM optimization:
 
-```mermaid
-flowchart LR
-    A[Sample Trajectories] --> B[Natural Language Reflection]
-    B --> C[Diagnose Problems]
-    C --> D[Propose Updates]
-    D --> E[Combine Lessons from Pareto Frontier]
-    E --> F[Evolved Prompt]
-    F --> A
-```
+> "We argue that the interpretable nature of *language* can often provide a much richer learning medium for LLMs, compared with policy gradients derived from sparse, scalar rewards."
 
-1. **Trajectory Sampling**: Run the current prompt on a diverse set of tasks
-2. **Reflection Phase**: The LLM analyzes its own failures in natural language
-3. **Diagnosis**: Extract patterns from failures (e.g., "I consistently miss edge cases with negative numbers")
-4. **Proposal**: Generate candidate prompt improvements that address diagnosed issues
-5. **Pareto Selection**: Keep improvements that advance on any objective without regressing on others
+This insight is deceptively simple but has profound implications. When a prompt fails, the failure trace—the reasoning steps, the tool calls, the intermediate outputs—contains far more information than a binary success/failure signal. A model that can reflect on this trace in natural language can diagnose specific problems ("I consistently missed edge cases involving negative numbers") and propose targeted fixes.
 
-### Results
+The GEPA algorithm operationalizes this insight through what the authors call "reflective prompt evolution":
 
-GEPA outperforms GRPO (Group Relative Policy Optimization) by 10-20% while using **35× fewer rollouts**. This efficiency comes from the richness of natural language feedback compared to scalar rewards.
+> "Given any AI system containing one or more LLM prompts, GEPA samples system-level trajectories (e.g., reasoning, tool calls, and tool outputs) and reflects on them in natural language to diagnose problems, propose and test prompt updates, and combine complementary lessons from the Pareto frontier of its own attempts."
 
-### Chrysalis Implementation
+The key innovation is the Pareto frontier. Rather than greedily accepting any improvement, GEPA maintains a population of prompts that represent different trade-offs between objectives (accuracy, cost, latency). When a new prompt variant is proposed, it's evaluated against the frontier: if it advances on any objective without regressing on others, it joins the population. This prevents the optimizer from collapsing onto a single local optimum and maintains diversity that proves valuable when requirements change.
 
-The [`optimizer-gepa.rkt`](../src/core/optimizer-gepa.rkt) module implements reflective prompt evolution:
+The results are striking: GEPA outperforms GRPO (Group Relative Policy Optimization) by 10-20% while using up to 35× fewer rollouts. This sample efficiency comes directly from the richness of natural language feedback compared to scalar rewards.
+
+### Implementation in Chrysalis Forge
+
+The [`optimizer-gepa.rkt`](../src/core/optimizer-gepa.rkt) module implements this reflective evolution loop. The core function is deceptively simple because the complexity lives in the meta-prompt that guides the optimizer LLM:
 
 ```racket
 (define (gepa-evolve! feedback [model "gpt-5.2"])
-  ;; Load current system prompt
+  (check-usage!)
   (define active (ctx-get-active))
-  ;; Ask LLM to rewrite based on feedback
+  (define sender (make-openai-sender #:model model))
   (define-values (ok? res usage) 
     (sender (format "~a\nCURRENT: ~a\nFEEDBACK: ~a" 
                     (get-meta) (Ctx-system active) feedback)))
-  ;; Save evolved context
-  (save-ctx! ...))
+  (if ok?
+      (let ([new-sys (hash-ref (string->jsexpr res) 'new_system_prompt)])
+        (log-cost-analysis model usage)
+        (save-ctx! (let ([db (load-ctx)]) 
+                     (hash-set db 'items 
+                       (hash-set (hash-ref db 'items) 
+                                 (format "evo_~a" (current-seconds)) 
+                                 (struct-copy Ctx active [system new-sys])))))
+        "Context Evolved.")
+      "Evolution Failed."))
 ```
 
-The `gepa-evolve!` function:
-- Takes natural language **feedback** describing what went wrong
-- Passes current system prompt and feedback to an optimizer LLM
-- Returns a new system prompt that incorporates the lessons
+The `get-meta` function returns the meta-prompt—the instructions that tell the optimizer *how* to optimize. This is itself subject to evolution through `gepa-meta-evolve!`, creating a recursive self-improvement loop. The evolved contexts are versioned with timestamps, maintaining a history that could be analyzed to understand the evolution trajectory.
 
-The **meta-optimizer** (`gepa-meta-evolve!`) takes this further by evolving the optimizer's own instructions, creating a recursive self-improvement loop.
+What makes this implementation particularly elegant is how it separates concerns: the feedback comes from the user or from automated evaluation; the meta-prompt encodes optimization strategy; the sender handles the mechanics of LLM interaction. This separation allows each component to evolve independently.
 
 ---
 
-## 2. MAP-Elites and Quality-Diversity Optimization
+## MAP-Elites: Illuminating the Space of Possible Solutions
 
-### Paper Reference
+While GEPA handles the *evolution* of prompts, we need a complementary mechanism for *organizing* the population of evolved variants. This is where MAP-Elites (Mouret & Clune, 2015) enters the picture.
 
-**"Illuminating search spaces by mapping elites"**  
-Jean-Baptiste Mouret & Jeff Clune  
-arXiv:1504.04909 (April 2015)
+The central insight of MAP-Elites is that optimization should produce not a single solution, but a *map* of solutions across a behavioral space:
 
-### Key Insight
+> "Many fields use search algorithms, which automatically explore a search space to find high-performing solutions... The goal of search algorithms has traditionally been to return the single highest-performing solution in a search space. Here we describe a new, fundamentally different type of algorithm that is more useful because it provides a holistic view of how high-performing solutions are distributed throughout a search space."
 
-Maintain a *map* of high-performing solutions across behavioral dimensions, not just one globally optimal solution. This provides:
-- **Diversity**: Solutions for different priorities/contexts
-- **Robustness**: Backup solutions if the "best" fails
-- **Exploration**: Local competition in bins prevents premature convergence
+Traditional optimization is like searching for the highest peak in a mountain range. MAP-Elites is like creating a topographic map that shows the highest point in every grid cell. This distinction matters because different situations call for different trade-offs. Sometimes you need the fastest response; sometimes you need the cheapest; sometimes accuracy trumps everything.
 
-### How It Works
+The algorithm works by discretizing a behavioral space (what MAP-Elites calls the "phenotype space") into bins, then maintaining the best-performing solution found for each bin. When a new solution is generated, it competes only against other solutions in its bin—local competition rather than global. This local competition is what enables the algorithm to maintain diversity while still selecting for quality.
 
-```mermaid
-graph TB
-    subgraph "Behavioral Space (Phenotype Grid)"
-        B1["(cheap, fast, compact)"]
-        B2["(cheap, fast, verbose)"]
-        B3["(cheap, slow, compact)"]
-        B4["(cheap, slow, verbose)"]
-        B5["(premium, fast, compact)"]
-        B6["(premium, fast, verbose)"]
-        B7["(premium, slow, compact)"]
-        B8["(premium, slow, verbose)"]
-    end
-    
-    subgraph "Archive"
-        A1["Elite Module A\nscore: 9.2"]
-        A2["Elite Module B\nscore: 8.7"]
-        A5["Elite Module C\nscore: 9.5"]
-        A8["Elite Module D\nscore: 8.1"]
-    end
-    
-    B1 --> A1
-    B2 --> A2
-    B5 --> A5
-    B8 --> A8
-```
+### The Phenotype Space in Chrysalis
 
-The behavioral space is discretized into **bins** based on observable characteristics (phenotype). Each bin maintains only the highest-scoring solution. New solutions compete **locally within their bin**, not globally.
-
-### Phenotype Dimensions in Chrysalis
-
-| Dimension | Description | Measurement |
-|-----------|-------------|-------------|
-| `accuracy` | Correctness of output | 0-10 score vs. expected |
-| `latency` | Response time | Elapsed milliseconds |
-| `cost` | Token expenditure | Calculated from model pricing |
-| `usage` | Output verbosity | Total tokens generated |
-
-### Chrysalis Implementation
-
-The [`dspy-core.rkt`](../src/llm/dspy-core.rkt) module defines the archive structure:
+In Chrysalis Forge, we use a four-dimensional phenotype space defined in [`dspy-core.rkt`](../src/llm/dspy-core.rkt):
 
 ```racket
 (struct Phenotype (accuracy latency cost usage) #:transparent)
-
-(struct ModuleArchive 
-  (id sig archive point-cloud default-id) 
-  #:transparent)
-;; archive: hash of (bin-key → (cons score module)) for evolution
-;; point-cloud: list of (cons phenotype module) for KNN search
 ```
 
-The [`dspy-compile.rkt`](../src/llm/dspy-compile.rkt) optimizer maintains this archive:
+These dimensions capture the fundamental trade-offs in LLM-based systems:
+
+**Accuracy** measures correctness. A prompt that produces the right answer scores high; one that hallucinates scores low. This is the dimension users care about most, but it's not the only one that matters.
+
+**Latency** captures response time. Some applications (voice assistants, real-time coding) demand speed; others (batch processing, research) can tolerate slower responses. A high-accuracy prompt that takes 30 seconds isn't useful for interactive applications.
+
+**Cost** reflects token expenditure. With API-based LLMs charging per token, a prompt that achieves 95% accuracy using 10× the tokens of one achieving 90% may not be the better choice. This dimension enables cost-conscious operation.
+
+**Usage** measures output verbosity. Sometimes you want concise answers; sometimes you want thorough explanations. This dimension captures that preference.
+
+The `ModuleArchive` structure maintains both discrete bins (for backward-compatible keyword selection) and a continuous point cloud (for geometric KNN selection):
 
 ```racket
-(define (compile! m ctx trainset send! ...)
-  ;; 1. Bootstrap initial population
-  ;; 2. Establish relative thresholds from medians
-  ;; 3. Evolutionary loop: mutate elites, evaluate, archive
-  ;; 4. Return ModuleArchive with discrete bins + continuous point cloud
-  ...)
+(struct ModuleArchive (id sig archive point-cloud default-id) #:transparent)
 ```
 
-Key insight: Chrysalis maintains **both** discrete bins (for backwards-compatible keyword selection) and a continuous **point cloud** (for geometric KNN selection).
+The dual representation is key to flexibility. The `archive` hash maps bin keys to (score, module) pairs, enabling fast lookup when the user specifies a keyword like "fast" or "cheap". The `point-cloud` list of (phenotype, module) pairs enables smooth interpolation when the user provides natural language like "I need something reasonably fast but accuracy matters more."
 
 ---
 
-## 3. Grassmann Flows and Geometric Attention
+## Geometric Selection: From Keywords to Manifolds
 
-### Paper Reference
+The MAP-Elites archive gives us a collection of elite solutions, but we still need a mechanism for selecting among them based on user intent. This is where geometric intuition becomes valuable.
 
-**"Attention Is Not What You Need"**  
-Zhang Chong  
-arXiv:2512.19428 (December 2025)
+The "Attention Is Not What You Need" paper (Zhang, 2025) proposes a radical rethinking of the attention mechanism through the lens of differential geometry:
 
-### Key Insight
+> "We propose an attention-free architecture based on Grassmann flows. Instead of forming an L by L attention matrix, our Causal Grassmann layer (i) linearly reduces token states, (ii) encodes local token pairs as two-dimensional subspaces on a Grassmann manifold via Plücker coordinates, and (iii) fuses these geometric features back into the hidden states through gated mixing."
 
-Standard attention is fundamentally a **tensor lifting** operation. It can be replaced with structured manifold operations on Grassmann manifolds, yielding:
-- Linear scaling in sequence length (vs. quadratic for attention)
-- More interpretable geometric invariants
-- Natural handling of subspace relationships
+While Chrysalis Forge doesn't implement Grassmann flows at the neural architecture level (that would require custom model training), it adopts the geometric philosophy for selection. The phenotype space is treated as a continuous manifold, and selection is performed via K-nearest-neighbor search in this space.
 
-### How It Works
-
-1. **Plücker Coordinates**: Encode token pairs as 2D subspaces
-2. **Gated Mixing**: Fuse representations via geometric operations
-3. **Controlled Deformations**: Propagate information over local windows
-
-The key mathematical object is the **Grassmannian** Gr(k, n)—the space of all k-dimensional subspaces of an n-dimensional vector space.
-
-### Chrysalis Implementation
-
-While Chrysalis doesn't implement Grassmann flows directly (that would require a custom neural architecture), it adopts the **geometric philosophy** for task and module selection.
-
-The [`dspy-selector.rkt`](../src/llm/dspy-selector.rkt) module uses phenotype spaces as continuous geometric coordinates:
+The [`dspy-selector.rkt`](../src/llm/dspy-selector.rkt) module implements this geometric selection:
 
 ```racket
 (define (phenotype-distance p1 p2)
@@ -196,101 +119,135 @@ The [`dspy-selector.rkt`](../src/llm/dspy-selector.rkt) module uses phenotype sp
            (expt (- (Phenotype-cost p1) (Phenotype-cost p2)) 2)
            (expt (- (Phenotype-usage p1) (Phenotype-usage p2)) 2))))
 
-(define (select-elite archive target)
-  ;; Normalize point cloud to [0,1]
-  ;; Find nearest neighbor to target phenotype
-  ;; Return corresponding module
-  ...)
+(define (normalize-phenotype pheno mins maxs)
+  (define (safe-norm v lo hi) 
+    (if (= lo hi) 0.5 (/ (- v lo) (- hi lo))))
+  (Phenotype (safe-norm (Phenotype-accuracy pheno) (first mins) (first maxs))
+             (safe-norm (Phenotype-latency pheno) (second mins) (second maxs))
+             (safe-norm (Phenotype-cost pheno) (third mins) (third maxs))
+             (safe-norm (Phenotype-usage pheno) (fourth mins) (fourth maxs))))
 ```
 
-This geometric approach allows **natural language priority mapping**:
+The normalization step is crucial. Raw phenotype values have different scales—accuracy might range from 0-10, latency from 100-10000ms, cost from 0.001-0.1 dollars. Without normalization, the distance metric would be dominated by whichever dimension has the largest absolute values. By normalizing to [0,1], we ensure each dimension contributes proportionally.
+
+The `select-elite` function performs KNN search (with K=1) in the normalized space:
+
+```racket
+(define (select-elite archive target)
+  (define cloud (ModuleArchive-point-cloud archive))
+  (when (null? cloud)
+    (error "Cannot select elite: point cloud is empty"))
+  
+  (define-values (mins maxs) (find-bounds cloud))
+  (define target-norm (normalize-phenotype target mins maxs))
+  
+  (define scored
+    (for/list ([entry cloud])
+      (define pheno (car entry))
+      (define mod (cdr entry))
+      (define pheno-norm (normalize-phenotype pheno mins maxs))
+      (cons (phenotype-distance target-norm pheno-norm) mod)))
+  
+  (define sorted (sort scored < #:key car))
+  (cdr (first sorted)))
+```
+
+This geometric approach enables something powerful: natural language priority specification. The `text->vector` function maps natural language descriptions to target phenotypes, either through a keyword fast-path or through LLM interpretation:
 
 ```racket
 (define KEYWORD-MAP
-  (hash "fast"     (Phenotype 5.0 0.0 0.5 0.5)   ; Prioritize low latency
-        "cheap"    (Phenotype 5.0 0.5 0.0 0.5)   ; Prioritize low cost  
-        "accurate" (Phenotype 10.0 0.5 0.5 0.5)  ; Prioritize accuracy
-        ...))
+  (hash "fast"     (Phenotype 5.0 0.0 0.5 0.5)   ; Low latency
+        "cheap"    (Phenotype 5.0 0.5 0.0 0.5)   ; Low cost  
+        "accurate" (Phenotype 10.0 0.5 0.5 0.5)  ; High accuracy
+        "concise"  (Phenotype 5.0 0.5 0.5 0.0)   ; Low usage
+        "verbose"  (Phenotype 5.0 0.5 0.5 1.0))) ; High usage
+
+(define (text->vector text [send! #f])
+  (define lower (string-downcase text))
+  (define matched
+    (for/first ([(kw pheno) (in-hash KEYWORD-MAP)]
+                #:when (string-contains? lower kw))
+      pheno))
+  (cond
+    [matched matched]
+    [send!
+     ;; Use LLM to interpret novel descriptions
+     (define prompt 
+       (format "The user wants an agent with priority: \"~a\"
+Return JSON with accuracy, speed, cost, brevity (0.0-1.0 scale)." text))
+     (define-values (ok? raw meta) (send! prompt))
+     (if ok?
+         (let ([parsed (string->jsexpr raw)])
+           (Phenotype (* 10.0 (hash-ref parsed 'accuracy 0.5))
+                      (- 1.0 (hash-ref parsed 'speed 0.5))
+                      (- 1.0 (hash-ref parsed 'cost 0.5))
+                      (- 1.0 (hash-ref parsed 'brevity 0.5))))
+         (Phenotype 5.0 0.5 0.5 0.5))]
+    [else (Phenotype 5.0 0.5 0.5 0.5)]))
 ```
 
-The user says "I need something fast and cheap" → mapped to target phenotype → KNN finds closest elite in archive.
+A user saying "I'm broke but need precision" triggers the LLM interpretation path, which returns something like `{accuracy: 0.9, speed: 0.3, cost: 0.1, brevity: 0.5}`. This gets transformed into a target phenotype emphasizing accuracy and low cost, which then drives KNN selection to find the closest elite in the archive.
 
 ---
 
-## 4. MAKER: Extreme Decomposition for Reliability
+## MAKER: Achieving Reliability Through Decomposition
 
-### Paper Reference
+The preceding techniques—GEPA, MAP-Elites, geometric selection—address how to *optimize* and *select* prompts. But even the best prompt will occasionally fail, and for some applications, occasional failure is unacceptable. The MAKER paper (Cognizant AI Lab, 2025) addresses this reliability problem through a radical approach: extreme decomposition.
 
-**"Solving a Million-Step LLM Task with Zero Errors"**  
-arXiv:2511.09030 (November 2025)
+> "LLMs have achieved remarkable breakthroughs in reasoning, insights, and tool use, but chaining these abilities into extended processes at the scale of those routinely executed by humans, organizations, and societies has remained out of reach. The models have a persistent error rate that prevents scale-up."
 
-### Key Insight
+The key insight is that reliability compounds multiplicatively. If each step has a 1% error rate, a 100-step task will fail more than 63% of the time. A 1000-step task will almost certainly fail. The MAKER solution is three-fold:
 
-Reliability scales through **extreme decomposition** and **local error correction**, not bigger models. Three mechanisms work together:
+**Maximal Agentic Decomposition (MAD)**: Decompose tasks into the smallest possible subtasks, each handled by a focused "microagent" with minimal context. This isolation prevents errors from propagating and makes each subtask easier to verify.
 
-1. **MAD (Maximal Agentic Decomposition)**: Decompose to atomic subtasks, one decision per microagent
-2. **First-to-K Voting**: Run parallel agents, accept first action with k more votes than alternatives
-3. **Red-flagging**: Automatically discard unreliable responses
+**First-to-K Voting**: Run multiple agents on the same subtask in parallel, accepting the first answer to achieve K more votes than any alternative. This provides rapid consensus without requiring all agents to complete.
 
-### Results
+**Red-flagging**: Automatically discard responses that show signs of unreliability—length explosion, format violations, confidence hedging, or repetitive loops.
 
-MAKER achieved million-step tasks with **zero errors**—a remarkable result that demonstrates the power of compositional reliability.
+The results are remarkable:
 
-### First-to-K Voting
+> "This paper describes MAKER, the first system that successfully solves a task with over one million LLM steps with zero errors, and, in principle, scales far beyond this level."
 
-```mermaid
-sequenceDiagram
-    participant O as Orchestrator
-    participant V1 as Voter 1
-    participant V2 as Voter 2
-    participant V3 as Voter 3
-    participant V4 as Voter 4
-    participant V5 as Voter 5
-    
-    O->>V1: Task
-    O->>V2: Task
-    O->>V3: Task
-    O->>V4: Task
-    O->>V5: Task
-    
-    V1-->>O: Response A
-    V3-->>O: Response A
-    V2-->>O: Response B
-    V4-->>O: Response A (k=3 reached!)
-    
-    Note over O: Accept Response A
-    O->>V5: Cancel
-```
+### Geometric Decomposition in Chrysalis
 
-The system accepts the **first response that reaches k votes**, not waiting for all voters to complete.
-
-### Chrysalis Implementation
-
-#### Voting Consensus ([`decomp-voter.rkt`](../src/core/decomp-voter.rkt))
+Chrysalis Forge implements MAKER-inspired decomposition in [`geometric-decomposition.rkt`](../src/core/geometric-decomposition.rkt). The module defines a decomposition phenotype that extends the module phenotype with task-specific dimensions:
 
 ```racket
-(struct VotingConfig (n-voters k-threshold timeout-ms decorrelate?) #:transparent)
+(struct DecompositionPhenotype 
+  (depth breadth accumulated-cost context-size success-rate) 
+  #:transparent)
 
-(define VOTING-NONE     (VotingConfig 1 1 30000 #f))
-(define VOTING-LOW      (VotingConfig 2 2 45000 #t))
-(define VOTING-MEDIUM   (VotingConfig 3 2 60000 #t))
-(define VOTING-HIGH     (VotingConfig 5 3 90000 #t))
-(define VOTING-CRITICAL (VotingConfig 7 4 120000 #t))
+(struct DecompositionLimits 
+  (max-depth max-breadth max-cost max-context min-success-rate) 
+  #:transparent)
 ```
 
-| Scenario | Voters | K-Threshold | Use Case |
-|----------|--------|-------------|----------|
-| None | 1 | 1 | Default (no voting) |
-| Low | 2 | 2 | Low-stakes operations |
-| Medium | 3 | 2 | Standard operations |
-| High | 5 | 3 | Important changes |
-| Critical | 7 | 4 | Destructive operations |
+The **depth** dimension tracks how deeply the task has been decomposed—how many levels of subtasks. Excessive depth suggests the decomposition strategy is wrong or the task is genuinely intractable.
 
-The `decorrelate?` flag varies temperature and random seeds across voters to reduce correlated errors.
+The **breadth** dimension measures the maximum parallel fan-out at any level. Too much breadth strains resources and can indicate poor problem decomposition.
 
-#### Explosion Detection ([`geometric-decomposition.rkt`](../src/core/geometric-decomposition.rkt))
+The **accumulated-cost** tracks total expenditure across all subtasks. Even if each subtask is cheap, thousands of them add up.
+
+The **context-size** monitors peak context tokens across active branches. Context limits are real constraints that must be respected.
+
+The **success-rate** tracks the fraction of subtasks that succeed. A dropping success rate suggests the decomposition strategy is producing subtasks the model can't handle.
+
+The explosion detection mechanism monitors all these dimensions against limits that vary by priority:
 
 ```racket
+(define (limits-for-priority priority budget context-limit)
+  (match priority
+    ['critical
+     (DecompositionLimits 10 20 (* budget 2.0) (* context-limit 1.5) 0.6)]
+    ['high
+     (DecompositionLimits 8 15 (* budget 1.5) context-limit 0.7)]
+    ['normal
+     (DecompositionLimits 6 10 budget (* context-limit 0.8) 0.75)]
+    ['low
+     (DecompositionLimits 4 6 (* budget 0.5) (* context-limit 0.5) 0.8)]
+    [_
+     (DecompositionLimits 6 10 budget context-limit 0.75)]))
+
 (define (detect-explosion phenotype limits)
   (cond
     [(> (DecompositionPhenotype-depth phenotype)
@@ -311,442 +268,173 @@ The `decorrelate?` flag varies temperature and random seeds across voters to red
     [else #f]))
 ```
 
-When explosion is detected, the system **rolls back** to the last checkpoint and **prunes** the offending branch.
-
-#### Red-Flagging ([`red-flag.rkt`](../src/utils/red-flag.rkt))
-
-Responses are automatically discarded if they show unreliability:
+When an explosion is detected, the system doesn't simply fail. It rolls back to the most recent checkpoint and tries an alternative approach:
 
 ```racket
-(define (red-flag-response response [config DEFAULT-RED-FLAG-CONFIG])
-  (filter values
-          (list (check-length-explosion response config)
-                (check-format-violation response config)
-                (check-low-confidence response config)
-                (check-repetition response config)
-                (check-incoherence response))))
+(define (checkpoint! state reason)
+  (define snap (snapshot-tree (DecompositionState-tree state)))
+  (define cp (DecompositionCheckpoint snap
+                                       (DecompositionState-phenotype state)
+                                       (DecompositionState-steps-taken state)
+                                       reason))
+  (set-DecompositionState-checkpoints! state 
+                                        (cons cp (DecompositionState-checkpoints state)))
+  state)
+
+(define (rollback! state)
+  (define cps (DecompositionState-checkpoints state))
+  (when (null? cps)
+    (error 'rollback! "No checkpoints available"))
+  (define cp (car cps))
+  (restore-tree! (DecompositionState-tree state) 
+                 (DecompositionCheckpoint-tree-snapshot cp))
+  (set-DecompositionState-phenotype! state (DecompositionCheckpoint-phenotype cp))
+  (set-DecompositionState-steps-taken! state (DecompositionCheckpoint-step-index cp))
+  (set-DecompositionState-checkpoints! state (cdr cps))
+  state)
 ```
 
-| Check | Detection | Severity |
-|-------|-----------|----------|
-| Length explosion | Response > max length | Critical |
-| Format violation | Doesn't match expected pattern | Critical |
-| Low confidence | Phrases like "I'm not sure" | Warning |
-| Repetition | N-gram repetition ratio > threshold | Warning |
-| Incoherence | Empty, garbled, or contradictory | Critical |
+This checkpoint/rollback mechanism is what allows Chrysalis to explore multiple decomposition strategies without committing irrevocably to any one approach. If a strategy leads to explosion, the system can backtrack and try something else.
 
 ---
 
-## 5. Graphiti/Zep: Temporal Knowledge Graphs
+## Temporal Knowledge and Memory
 
-### Paper Reference
+The preceding techniques handle individual tasks, but real agents operate over extended periods, accumulating knowledge and experience. The Zep paper (Rasmussen et al., 2025) addresses this temporal dimension:
 
-**"Zep: A Temporal Knowledge Graph Architecture for Agent Memory"**  
-arXiv:2501.13956 (January 2025)
+> "We introduce Zep, a novel memory layer service for AI agents... Unlike existing retrieval-augmented generation (RAG) frameworks for large language model (LLM)-based agents are limited to static document retrieval, enterprise applications demand dynamic knowledge integration from diverse sources including ongoing conversations and business data."
 
-### Key Insight
+The key innovation is **bi-temporal tracking**: distinguishing between when an event occurred and when the system learned about it. This distinction matters for reasoning about change. If a user says "I switched from Adidas to Nike" today, the system needs to know that "prefers Adidas" was true until today but is now false, and that this change was recorded today.
 
-Agent memory requires **bi-temporal** tracking:
-- **Event time**: When did this fact become true in the world?
-- **Ingestion time**: When did the system learn this fact?
+Chrysalis Forge doesn't implement a full temporal knowledge graph (that would be a substantial subsystem), but it applies the temporal principle through its store architecture:
 
-This separation enables:
-- Reasoning about when facts were valid
-- Handling contradictions via temporal edge invalidation
-- Incremental updates without reprocessing history
+The **context store** (`context-store.rkt`) maintains versioned contexts with timestamps, enabling point-in-time recovery and evolution analysis.
 
-### Features
+The **trace store** (`trace-store.rkt`) logs all operations with timing information, creating an audit trail for debugging and learning.
 
-- **Real-time incremental updates**: No batch reindexing
-- **Hybrid retrieval**: Semantic + keyword + graph traversal
-- **Temporal invalidation**: New facts can supersede old ones
-
-### Results
-
-- 94.8% on DMR (Dynamic Memory Retrieval) benchmark
-- 90% latency reduction on LongMemEval
-
-### Chrysalis Implementation
-
-While Chrysalis doesn't implement a full temporal knowledge graph, it implements the **core pattern** across multiple stores:
-
-#### Context Store ([`context-store.rkt`](../src/stores/context-store.rkt))
-
-Manages agent context with temporal sessions:
-
-```racket
-(struct Ctx (system memory tool-hints mode priority history compacted-summary) 
-  #:transparent)
-```
-
-The `history` field maintains conversation turns, and `compacted-summary` provides temporal compression of older context.
-
-#### Trace Store ([`trace-store.rkt`](../src/stores/trace-store.rkt))
-
-Logs all operations for learning and debugging:
-
-```racket
-(define (log-trace! #:task task #:history history #:tool-results tool-results 
-                    #:final-response final #:tokens [tokens (hash)] #:cost [cost 0.0])
-  ;; Append JSONL with timestamp
-  (call-with-output-file TRACE-PATH
-    (λ (out) (write-json (hash 'ts (current-seconds) ...) out) (newline out))
-    #:exists 'append))
-```
-
-#### Eval Store ([`eval-store.rkt`](../src/stores/eval-store.rkt))
-
-Tracks task results by profile for organic learning:
-
-```racket
-(define (log-eval! #:task-id task-id #:success? success? #:profile profile ...)
-  ;; Log to evals.jsonl
-  ;; Update running statistics
-  (update-profile-stats! profile success? task-type tools-used))
-
-(define (suggest-profile task-type)
-  ;; Query historical success rates
-  ;; Return best-performing profile for this task type
-  ...)
-```
-
-This creates a **feedback loop**:
-
-```mermaid
-flowchart LR
-    A[log_feedback] --> B[eval-store]
-    B --> C[profile_stats]
-    C --> D[suggest_profile]
-    B --> E[evolve_system]
-    E --> F[GEPA]
-    F --> G[Improved Prompts]
-```
+The **eval store** (`eval-store.rkt`) tracks task outcomes by profile over time, enabling the system to learn which configurations work best for which task types.
 
 ---
 
-## 6. Recursive Language Models
+## Recursive Language Models and Sub-Agents
 
-### Paper Reference
+The final piece of the theoretical puzzle addresses context management. Even with the largest context windows, there are tasks that require processing more information than fits. The Recursive Language Models paper (Zhang et al., 2025) proposes an elegant solution:
 
-**"Recursive Language Models"**  
-Zhang, Kraska, Khattab  
-arXiv:2512.24601 (December 2025)
+> "We study allowing large language models (LLMs) to process arbitrarily long prompts through the lens of inference-time scaling. We propose Recursive Language Models (RLMs), a general inference strategy that treats long prompts as part of an external environment and allows the LLM to programmatically examine, decompose, and recursively call itself over snippets of the prompt."
 
-### Key Insight
+Rather than forcing the model to process everything at once, RLMs give the model control over what it examines. The model can peek at portions of the context, grep for relevant sections, and spawn recursive sub-calls to process chunks—all while keeping its own context window lean.
 
-Handle unbounded context by letting the model **recursively decompose and interact with context via REPL**. The model becomes an active participant in context management, not a passive consumer of fixed-length inputs.
+Chrysalis Forge implements this through the sub-agent system in [`sub-agent.rkt`](../src/core/sub-agent.rkt). Sub-agents are spawned with specific **profiles** that determine their tool access:
 
-### How It Works
+- **editor**: File operations (read, write, patch, diff)
+- **researcher**: Search operations (grep, web search, file reading)
+- **vcs**: Version control (git and jujutsu operations)
+- **all**: Full toolkit (used sparingly)
 
-```mermaid
-flowchart TB
-    Q[Query] --> Root[Root LM]
-    Root --> Ctx[Context Variable]
-    Root --> Ops{Operations}
-    Ops --> Peek[peek: view section]
-    Ops --> Grep[grep: search pattern]
-    Ops --> Part[partition: split context]
-    Ops --> Map[map: apply to chunks]
-    Ops --> Spawn[spawn: recursive sub-LM]
-    
-    Spawn --> Sub1[Sub-LM 1]
-    Spawn --> Sub2[Sub-LM 2]
-    Spawn --> Sub3[Sub-LM 3]
-    
-    Sub1 --> Merge[Merge Results]
-    Sub2 --> Merge
-    Sub3 --> Merge
-    Merge --> Root
-```
+This profile system serves two purposes. First, it reduces the tool surface area that each sub-agent must reason about, improving focus and reducing confusion. Second, it provides a security boundary—a researcher sub-agent can't accidentally modify files.
 
-### Results
-
-RLM(GPT-5-mini) outperforms GPT-5 by **114%** on long-context benchmarks, and can handle **10M+ tokens** effectively.
-
-### Chrysalis Implementation
-
-The [`sub-agent.rkt`](../src/core/sub-agent.rkt) module implements parallel sub-agent spawning:
-
-```racket
-(define (spawn-sub-agent! prompt run-fn #:context [context ""] #:profile [profile 'all])
-  ;; Generate unique ID
-  ;; Create async channel for results
-  ;; Spawn thread with filtered tool access
-  ;; Return task ID for later awaiting
-  ...)
-```
-
-#### Tool Profiles
-
-Sub-agents operate with **focused tool access**:
-
-| Profile | Tools | Use Case |
-|---------|-------|----------|
-| `editor` | read_file, write_file, patch_file, preview_diff, list_dir | File modification |
-| `researcher` | read_file, list_dir, grep_code, web_search, web_fetch | Information gathering |
-| `vcs` | git_*, jj_* | Version control |
-| `all` | Full toolkit | General tasks |
-
-```racket
-(define PROFILE-EDITOR
-  '("read_file" "write_file" "patch_file" "preview_diff" "list_dir"))
-
-(define PROFILE-RESEARCHER
-  '("read_file" "list_dir" "grep_code" "web_search" "web_fetch" "web_search_news"))
-
-(define PROFILE-VCS
-  '("git_status" "git_diff" "git_log" "git_commit" "git_checkout"
-    "jj_status" "jj_log" "jj_diff" "jj_undo" ...))
-```
-
-This mirrors RLM's ability to spawn specialized sub-models for different aspects of a task.
+The sub-agent architecture enables parallel execution of independent subtasks. When a complex task decomposes into researching multiple files, an editor sub-agent and several researcher sub-agents can work simultaneously, with results merged when all complete.
 
 ---
 
-## 7. DSPy Programming Model
+## The DSPy Programming Model
 
-### Reference
-
-**Stanford DSPy Framework**  
-[DSPy GitHub Repository](https://github.com/stanfordnlp/dspy)
-
-### Key Insight
-
-Treat LLM prompts as **typed modules** with signatures (inputs/outputs). This enables:
-- Composable prompt programs
-- Automatic optimization of instructions and demonstrations
-- Type-safe data flow between LLM calls
-
-### Components
-
-```mermaid
-classDiagram
-    class Signature {
-        +name: string
-        +ins: List[SigField]
-        +outs: List[SigField]
-    }
-    
-    class Module {
-        +id: string
-        +sig: Signature
-        +strategy: Symbol
-        +instructions: string
-        +demos: List[Example]
-        +params: Hash
-    }
-    
-    class Predict {
-        Direct completion
-    }
-    
-    class ChainOfThought {
-        Structured reasoning first
-    }
-    
-    Signature <|-- Module
-    Module <|-- Predict
-    Module <|-- ChainOfThought
-```
-
-### Chrysalis Implementation
-
-The [`dspy-core.rkt`](../src/llm/dspy-core.rkt) module provides the programming model:
+Underlying all these techniques is a programming model borrowed from Stanford's DSPy framework. The core insight is that LLM interactions should be treated as typed modules with explicit signatures:
 
 ```racket
-;; Define a signature
-(define OptSig 
-  (signature Opt 
-    (in [inst string?] [fails string?]) 
-    (out [thought string?] [new_inst string?])))
-
-;; Create a module
-(define (make-meta-optimizer) 
-  (ChainOfThought OptSig 
-    #:instructions "Fix failing examples. Return JSON." 
-    #:params (hash 'temperature 0.7)))
-
-;; Run the module
-(define result (run-module module ctx inputs send!))
+(struct SigField (name pred) #:transparent)
+(struct Signature (name ins outs) #:transparent)
+(struct Module (id sig strategy instructions demos params) #:transparent)
 ```
 
-#### Scoring
+A `Signature` declares what goes in and what comes out. A `Module` wraps a signature with execution strategy (direct prediction vs. chain-of-thought reasoning), instructions, few-shot demonstrations, and parameters.
 
-The `score-result` function computes composite scores:
+This structure enables several things that ad-hoc prompting doesn't:
+
+**Composability**: Modules can be chained, with the outputs of one becoming inputs to another. Type checking (via predicates) catches mismatches.
+
+**Optimization**: Because the signature is explicit, an optimizer knows exactly what success looks like. It can generate training examples, mutate instructions, and evaluate results against expected outputs.
+
+**Abstraction**: Users interact with modules, not prompts. The prompt is an implementation detail that can be evolved without changing the interface.
+
+The `run-module` function handles execution:
 
 ```racket
-(define (score-result expected rr)
-  ;; 1. Accuracy Score (0 to 10)
-  (define accuracy (if (equal? expected actual) 10.0 0.0))
-  
-  ;; 2. Latency Penalty
-  (define latency-penalty (min 2.0 (/ elapsed 5000.0)))
-  
-  ;; 3. Cost Penalty
-  (define cost-penalty (* cost 1000.0))
-  
-  ;; Composite
-  (max 0.1 (- accuracy latency-penalty cost-penalty)))
+(define (run-module m ctx inputs send! #:trace [tr #f] #:cache? [cache? #t])
+  (define target-m 
+    (cond
+      [(Module? m) m]
+      [(ModuleArchive? m)
+       (define prio (Ctx-priority ctx))
+       (cond
+         ;; Symbol priority: use keyword mapping
+         [(and (symbol? prio) (member prio '(cheap fast compact verbose)))
+          (define matching-key 
+            (for/first ([(k v) (in-hash (ModuleArchive-archive m))]
+                        #:when (member prio k))
+              k))
+          (if matching-key 
+              (cdr (hash-ref (ModuleArchive-archive m) matching-key))
+              (cdr (hash-ref (ModuleArchive-archive m) 
+                             (ModuleArchive-default-id m))))]
+         ;; Symbol 'best: use default
+         [(equal? prio 'best)
+          (cdr (hash-ref (ModuleArchive-archive m) 
+                         (ModuleArchive-default-id m)))]
+         ;; String priority: geometric KNN selection
+         [(and (string? prio) (not (null? (ModuleArchive-point-cloud m))))
+          (ensure-selector!)
+          (define target-vec (text->vector-fn prio send!))
+          (select-elite-fn m target-vec)]
+         [else (cdr (hash-ref (ModuleArchive-archive m) 
+                              (ModuleArchive-default-id m)))])]
+      [else (error "Invalid module type")]))
+  ;; ... rest of execution
+  )
 ```
 
-#### Compilation
-
-The [`dspy-compile.rkt`](../src/llm/dspy-compile.rkt) module optimizes modules:
-
-```racket
-(define (compile! m ctx trainset send! ...)
-  ;; 1. Bootstrap few-shot examples
-  (define demos (bootstrap-fewshot trainset #:k k))
-  
-  ;; 2. Generate instruction mutations
-  (define seeds (default-instruction-mutations (Module-instructions m0)))
-  
-  ;; 3. Evolutionary loop with MAP-Elites
-  (for ([i (range iters)])
-    (define parent-mod (cdr (hash-ref archive parent-key)))
-    (define-values (child-mod thought) 
-      (meta-optimize-module parent-mod ctx trainset send!))
-    (update-archive! child-mod score p-key res-list))
-  
-  ;; 4. Return ModuleArchive
-  (ModuleArchive id sig archive point-cloud best-key))
-```
+This code shows the priority-aware selection in action. When passed a `ModuleArchive` rather than a single `Module`, the function examines the context's priority and selects appropriately—keyword fast-path for simple priorities, geometric KNN for natural language.
 
 ---
 
-## Synthesis: How These Ideas Combine
+## Synthesis: The Integrated System
 
-Chrysalis Forge synthesizes these research concepts into a unified system:
+These theoretical components don't exist in isolation. They form an integrated system where each part reinforces the others:
 
-```mermaid
-flowchart TB
-    subgraph "Programming Model"
-        DSPy[DSPy Signatures & Modules]
-    end
-    
-    subgraph "Optimization Layer"
-        GEPA[GEPA Reflection]
-        MAP[MAP-Elites Archive]
-        GEO[Geometric KNN Selection]
-    end
-    
-    subgraph "Execution Layer"
-        MAKER[MAKER Decomposition]
-        VOTE[Voting Consensus]
-        FLAG[Red-Flagging]
-        SUB[Recursive Sub-Agents]
-    end
-    
-    subgraph "Memory Layer"
-        CTX[Context Store]
-        TRACE[Trace Store]
-        EVAL[Eval Store]
-    end
-    
-    DSPy --> GEPA
-    DSPy --> MAP
-    
-    GEPA --> MAP
-    MAP --> GEO
-    
-    GEO --> MAKER
-    MAKER --> VOTE
-    MAKER --> FLAG
-    MAKER --> SUB
-    
-    SUB --> EVAL
-    VOTE --> EVAL
-    FLAG --> TRACE
-    
-    EVAL --> GEPA
-    TRACE --> GEPA
-```
+**DSPy** provides the programming model—typed modules with explicit signatures that can be composed, optimized, and swapped.
 
-### Integration Points
+**GEPA** evolves the content of these modules, using natural language reflection to diagnose failures and propose improvements, maintaining a Pareto frontier of candidates.
 
-| Component | Provides | Consumes |
-|-----------|----------|----------|
-| **DSPy** | Typed module interface | - |
-| **GEPA** | Evolved prompts | Feedback from eval store |
-| **MAP-Elites** | Diverse elite modules | Module evaluations |
-| **Geometric Selection** | Priority-based module choice | User priorities, phenotype archive |
-| **MAKER Decomposition** | Atomic subtasks | Complex task input |
-| **Voting** | Reliable consensus | Parallel agent responses |
-| **Red-Flagging** | Filtered responses | Raw LLM outputs |
-| **Sub-Agents** | Parallel execution | Decomposed subtasks |
-| **Temporal Stores** | Learning signal | All operations |
+**MAP-Elites** organizes the evolved modules into an archive indexed by phenotype, enabling selection based on user priorities without losing diversity.
 
-### The Complete Flow
+**Geometric Selection** maps user intent (expressed in keywords or natural language) to a target phenotype, then finds the closest elite in the archive via KNN.
 
-1. **User Request** enters the system with an optional priority ("fast", "accurate", etc.)
+**MAKER Decomposition** handles complex tasks by breaking them into atomic subtasks, with explosion detection and checkpoint/rollback providing safety nets.
 
-2. **Module Selection**: Geometric KNN finds the best module variant from the MAP-Elites archive based on the priority's phenotype
+**Sub-Agents** execute subtasks in parallel with focused tool profiles, enabling context management and concurrent execution.
 
-3. **Task Decomposition**: MAKER principles decompose complex tasks into atomic subtasks, with explosion detection preventing runaway decomposition
+**Temporal Stores** record everything—contexts, traces, evaluations—enabling learning over time and providing audit trails.
 
-4. **Parallel Execution**: Sub-agents execute subtasks with specialized tool profiles (editor, researcher, vcs)
+The flow is: a user request enters the system with an optional priority; geometric selection chooses the appropriate module variant; the task is potentially decomposed into subtasks; sub-agents execute with appropriate profiles; results are logged to the eval store; and periodically, GEPA uses accumulated feedback to evolve the modules, which updates the MAP-Elites archive, which changes future selection.
 
-5. **Voting & Filtering**: For high-stakes operations, First-to-K voting ensures consensus; red-flagging discards unreliable responses
-
-6. **Result Aggregation**: Subtask results merge back up the decomposition tree
-
-7. **Logging**: All operations log to trace and eval stores
-
-8. **Learning**: GEPA uses feedback and historical performance to evolve prompts; MAP-Elites updates the archive with new elites
-
-9. **Continuous Improvement**: The system gets better at both *what* to do (prompt content) and *how* to do it (decomposition strategies) over time
-
-### Design Principles
-
-1. **Composability**: Every component is independently useful but designed for integration
-
-2. **Self-Regulation**: Explosion detection, red-flagging, and voting provide automatic quality control
-
-3. **Organic Learning**: The system improves from usage without explicit retraining
-
-4. **Priority-Awareness**: From module selection to decomposition limits, user priorities propagate throughout
-
-5. **Graceful Degradation**: Checkpoints, rollbacks, and fallbacks ensure robustness
+This creates a virtuous cycle: usage generates feedback; feedback drives evolution; evolution improves future performance; improved performance generates better feedback. The system doesn't just execute tasks—it learns from them.
 
 ---
 
 ## Further Reading
 
-### Primary Papers
+The papers cited in this document represent active research directions. For deeper engagement:
 
-| Paper | Year | Key Contribution |
-|-------|------|------------------|
-| [GEPA](https://arxiv.org/abs/2507.19457) | 2025 | Reflective prompt evolution |
-| [MAP-Elites](https://arxiv.org/abs/1504.04909) | 2015 | Quality-diversity optimization |
-| [Grassmann Flows](https://arxiv.org/abs/2512.19428) | 2025 | Geometric attention replacement |
-| [MAKER](https://arxiv.org/abs/2511.09030) | 2025 | Million-step reliability |
-| [Zep](https://arxiv.org/abs/2501.13956) | 2025 | Temporal knowledge graphs |
-| [RLM](https://arxiv.org/abs/2512.24601) | 2025 | Recursive context management |
+**GEPA**: Agrawal et al., "GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning" (arXiv:2507.19457, July 2025)
 
-### Related Work
+**MAP-Elites**: Mouret & Clune, "Illuminating search spaces by mapping elites" (arXiv:1504.04909, April 2015)
 
-- **DSPy**: [Stanford NLP DSPy](https://github.com/stanfordnlp/dspy)
-- **GRPO**: Group Relative Policy Optimization for LLM alignment
-- **Pareto Optimization**: Multi-objective evolutionary optimization
-- **Quality-Diversity**: [QD algorithms overview](https://quality-diversity.github.io/)
+**Grassmann Flows**: Zhang, "Attention Is Not What You Need" (arXiv:2512.19428, December 2025)
 
-### Chrysalis Source Files
+**MAKER**: Cognizant AI Lab, "Solving a Million-Step LLM Task with Zero Errors" (arXiv:2511.09030, November 2025)
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| Core DSPy | [src/llm/dspy-core.rkt](../src/llm/dspy-core.rkt) | Signatures, modules, archives |
-| Compilation | [src/llm/dspy-compile.rkt](../src/llm/dspy-compile.rkt) | MAP-Elites evolution |
-| Geometric Selection | [src/llm/dspy-selector.rkt](../src/llm/dspy-selector.rkt) | KNN phenotype selection |
-| GEPA Optimizer | [src/core/optimizer-gepa.rkt](../src/core/optimizer-gepa.rkt) | Reflective evolution |
-| Meta Optimizer | [src/core/optimizer-meta.rkt](../src/core/optimizer-meta.rkt) | Self-improving optimizer |
-| Decomposition | [src/core/geometric-decomposition.rkt](../src/core/geometric-decomposition.rkt) | MAKER-style decomposition |
-| Voting | [src/core/decomp-voter.rkt](../src/core/decomp-voter.rkt) | First-to-K consensus |
-| Red Flags | [src/utils/red-flag.rkt](../src/utils/red-flag.rkt) | Response filtering |
-| Sub-Agents | [src/core/sub-agent.rkt](../src/core/sub-agent.rkt) | Parallel execution |
-| Context Store | [src/stores/context-store.rkt](../src/stores/context-store.rkt) | Session management |
-| Eval Store | [src/stores/eval-store.rkt](../src/stores/eval-store.rkt) | Performance tracking |
-| Trace Store | [src/stores/trace-store.rkt](../src/stores/trace-store.rkt) | Operation logging |
+**Zep/Graphiti**: Rasmussen et al., "Zep: A Temporal Knowledge Graph Architecture for Agent Memory" (arXiv:2501.13956, January 2025)
 
----
+**Recursive LMs**: Zhang et al., "Recursive Language Models" (arXiv:2512.24601, December 2025)
 
-*This document is part of the Chrysalis Forge project. For implementation details, see the source code linked above. For usage examples, see the main [README](../README.md).*
+The Chrysalis Forge source code itself serves as executable documentation. Start with [`main.rkt`](../main.rkt) for the entry point, [`src/llm/dspy-core.rkt`](../src/llm/dspy-core.rkt) for core abstractions, and [`src/core/geometric-decomposition.rkt`](../src/core/geometric-decomposition.rkt) for the decomposition system.
