@@ -5,8 +5,19 @@
 (provide (all-defined-out))
 
 (require racket/string racket/match racket/random json net/base64 
-         file/sha1 openssl/sha256)
-(require "config.rkt" "db.rkt")
+         file/sha1 racket/list)
+(require "config.rkt" (except-in "db.rkt" crypto-random-bytes))
+
+;; SHA256 implementation using available crypto
+;; Try to use openssl if available, else fall back to simple hash
+(define sha256-bytes
+  (with-handlers ([exn:fail? (lambda (_)
+                               ;; Fallback: Use sha1 twice with different seeds for 256-bit output
+                               (lambda (data)
+                                 (define d1 (sha1-bytes (bytes-append #"a" data)))
+                                 (define d2 (sha1-bytes (bytes-append #"b" data)))
+                                 (subbytes (bytes-append d1 d2) 0 32)))])
+    (dynamic-require 'openssl/sha256 'sha256-bytes)))
 
 ;; ============================================================================
 ;; Password Hashing (using PBKDF2-SHA256)

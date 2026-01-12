@@ -27,6 +27,19 @@
         (eprintf "[ERROR] Service module not available. Run 'raco pkg install' first.~n")
         (exit 1))))
 
+;; Client mode support
+(define client-available?
+  (with-handlers ([exn:fail? (λ (_) #f)])
+    (dynamic-require 'chrysalis-forge/src/service/client 'client-repl)
+    #t))
+
+(define (client-repl url #:api-key [api-key #f])
+  (if client-available?
+      ((dynamic-require 'chrysalis-forge/src/service/client 'client-repl) url #:api-key api-key)
+      (begin
+        (eprintf "[ERROR] Client module not available.~n")
+        (exit 1))))
+
 (load-dotenv!)
 
 
@@ -58,6 +71,10 @@
 (define serve-host-param (make-parameter (or (getenv "CHRYSALIS_HOST") "127.0.0.1")))
 (define daemon-param (make-parameter #f))
 (define config-path-param (make-parameter #f))
+
+;; Client mode parameters
+(define client-url-param (make-parameter "http://127.0.0.1:8080"))
+(define client-api-key-param (make-parameter #f))
 
 (define ACP-MODES
   (list (hash 'slug "ask" 'name "Ask" 'description "Read only.")
@@ -532,7 +549,7 @@ EOF
       (loop))))
 
 (define mode-param (make-parameter 'run))
-(command-line #:program "agentd" 
+(command-line #:program "chrysalis" 
               #:once-each 
               [("--acp") "Run ACP Server" (mode-param 'acp)]
               [("--acp-port") port "ACP Port (default: stdio)" (acp-port-param port)]
@@ -560,6 +577,10 @@ EOF
               [("--serve-host") host "Service bind address (default: 127.0.0.1)" (serve-host-param host)]
               [("--daemonize") "Run as background daemon" (daemon-param #t)]
               [("--config") path "Config file path (default: chrysalis.toml)" (config-path-param path)]
+              ;; Client mode options
+              [("--client") "Connect to a running Chrysalis service" (mode-param 'client)]
+              [("--url") url "Service URL to connect to (default: http://127.0.0.1:8080)" (client-url-param url)]
+              [("--api-key") key "API key or token for authentication" (client-api-key-param key)]
               #:args raw-args
               (match (mode-param)
                 ['run (begin
@@ -595,4 +616,7 @@ EOF
                  ;; HTTP Service Mode
                  (if (daemon-param)
                      (run-daemon!)
-                     (start-service! #:port (serve-port-param) #:host (serve-host-param)))]))
+                     (start-service! #:port (serve-port-param) #:host (serve-host-param)))]
+                ['client
+                 ;; Client Mode - Connect to running service
+                 (client-repl (client-url-param) #:api-key (client-api-key-param))]))

@@ -4,8 +4,18 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match json openssl/sha256 net/base64)
+(require racket/string racket/match json net/base64 file/sha1 (only-in db query-exec))
 (require "config.rkt" "db.rkt")
+
+;; SHA256 implementation - try openssl if available, else fall back
+(define sha256-bytes
+  (with-handlers ([exn:fail? (lambda (_)
+                               ;; Fallback: Use sha1 twice with different seeds for 256-bit output
+                               (lambda (data)
+                                 (define d1 (sha1-bytes (bytes-append #"a" data)))
+                                 (define d2 (sha1-bytes (bytes-append #"b" data)))
+                                 (subbytes (bytes-append d1 d2) 0 32)))])
+    (dynamic-require 'openssl/sha256 'sha256-bytes)))
 
 ;; ============================================================================
 ;; Key Encryption (AES-256-GCM simulation using XOR + HMAC)

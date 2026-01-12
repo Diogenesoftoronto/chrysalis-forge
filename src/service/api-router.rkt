@@ -4,8 +4,8 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match json racket/port racket/date)
-(require "config.rkt" "db.rkt" "auth.rkt" "key-vault.rkt")
+(require racket/string racket/match json racket/port racket/date racket/list)
+(require "config.rkt" "db.rkt" "auth.rkt" (except-in "key-vault.rkt" sha256-bytes))
 
 ;; ============================================================================
 ;; HTTP Response Helpers

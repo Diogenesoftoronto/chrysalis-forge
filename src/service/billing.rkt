@@ -4,7 +4,8 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match json net/http-client net/url net/uri-codec)
+(require racket/string racket/match json net/http-client net/url net/uri-codec racket/port
+         (only-in db query-maybe-row))
 (require "config.rkt" "db.rkt")
 
 ;; ============================================================================
@@ -262,9 +263,8 @@
     (define-values (allowed? remaining) (check-feature-access user-id feature))
     
     (if allowed?
-        (begin
+        (let ([response (handler request)])
           ;; Track usage after successful request
-          (define response (handler request))
           (track-usage! user-id feature)
           response)
         ;; Not allowed - payment required

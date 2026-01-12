@@ -1,0 +1,49 @@
+# VHS Test Scripts
+
+This directory contains [vhs](https://github.com/charmbracelet/vhs) scripts for generating end-to-end testing GIFs of the Chrysalis Forge CLI.
+
+## Prerequisites
+
+- [vhs](https://github.com/charmbracelet/vhs) installed (`go install github.com/charmbracelet/vhs@latest`)
+- `ffmpeg` installed
+- `ttyd` installed (optional, but recommended)
+
+## Available Scripts
+
+- `help.tape` - Demonstrates the help command and basic CLI usage
+- `interactive-demo.tape` - Shows interactive mode with `/help` and `/exit` commands
+- `priority-selection.tape` - Demonstrates natural language priority selection
+- `security-levels.tape` - Shows different security level options
+- `features-overview.tape` - Comprehensive overview of CLI features
+
+## Regenerating GIFs
+
+**Note**: Make sure `chrysalis` is installed via `raco pkg install` before generating GIFs. The scripts use the `chrysalis` binary command, not `racket main.rkt`.
+
+To regenerate all GIFs:
+
+```bash
+cd .vhs
+vhs help.tape
+vhs interactive-demo.tape
+vhs priority-selection.tape
+vhs security-levels.tape
+vhs features-overview.tape
+```
+
+Or regenerate a specific GIF:
+
+```bash
+vhs .vhs/help.tape
+```
+
+## Customization
+
+Edit the `.tape` files to customize:
+- Terminal size (`Set Width`, `Set Height`)
+- Font size (`Set FontSize`)
+- Theme (`Set Theme`)
+- Timing (`Sleep` durations)
+- Commands and interactions
+
+See the [vhs documentation](https://github.com/charmbracelet/vhs) for more details.

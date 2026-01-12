@@ -6,6 +6,8 @@ An evolvable, safety-gated Racket agent framework with DSPy-style optimization a
 
 Chrysalis Forge is a Racket-based environment for building and optimizing autonomous agents. It combines modern LLM integration with the safety and expressiveness of the Racket ecosystem.
 
+![Features Overview](.vhs/features-overview.gif)
+
 ### Key Features
 
 - **Evolvable Context**: Self-optimizing system prompts via GEPA (General Evolvable Prompting Architecture)
@@ -93,14 +95,18 @@ cd chrysalis-forge
 
 ## Usage
 
+![Help Command](.vhs/help.gif)
+
 ### Interactive Mode
 ```bash
-racket main.rkt -i
+chrysalis -i
 ```
+
+![Interactive Demo](.vhs/interactive-demo.gif)
 
 ### CLI Tasks
 ```bash
-racket main.rkt --level-1 "Analyze this code"
+chrysalis --perms 1 "Analyze this code"
 ```
 
 ### Configuration
@@ -114,6 +120,8 @@ racket main.rkt --level-1 "Analyze this code"
 Create `.agentd/rules.md` in your project root to add project-specific instructions to the agent's system prompt.
 
 ## Security Levels
+
+![Security Levels](.vhs/security-levels.gif)
 
 - **Level 0**: Sandbox (limited access)
 - **Level 1**: Network read + full filesystem read
@@ -143,14 +151,16 @@ The agent learns and improves through:
 
 One of the most powerful features is the ability to select agent "personalities" using **natural language**:
 
+![Priority Selection](.vhs/priority-selection.gif)
+
 ```bash
 # Use keyword shortcuts
-racket main.rkt --priority fast "Summarize this file"
-racket main.rkt --priority cheap "Analyze this code"
+chrysalis --priority fast "Summarize this file"
+chrysalis --priority cheap "Analyze this code"
 
 # Or describe what you need in plain English
-racket main.rkt --priority "I'm broke but need precision" "Review this PR"
-racket main.rkt --priority "I'm in a hurry" "Quick summary"
+chrysalis --priority "I'm broke but need precision" "Review this PR"
+chrysalis --priority "I'm in a hurry" "Quick summary"
 ```
 
 The system uses **K-Nearest Neighbor search** in a geometric phenotype space to find the elite agent that best matches your stated priorities. Keywords like `fast`, `cheap`, `accurate`, and `concise` are mapped directly; other phrases are interpreted by the LLM to find the optimal trade-off.

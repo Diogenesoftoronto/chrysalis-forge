@@ -4,7 +4,7 @@
 
 (provide (all-defined-out))
 
-(require racket/match racket/date)
+(require racket/match racket/date json (only-in db query-maybe-row))
 (require "config.rkt" "db.rkt")
 
 ;; ============================================================================
@@ -147,4 +147,4 @@
 (define-syntax-rule (return val)
   (raise val))
 
-(require json)
+

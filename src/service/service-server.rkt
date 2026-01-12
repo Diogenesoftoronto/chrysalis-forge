@@ -4,82 +4,97 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match racket/port json
-         web-server/servlet
-         web-server/servlet-env
-         web-server/http/request-structs
-         web-server/http/response-structs
-         web-server/http/bindings
+(require racket/string racket/match racket/port json racket/file racket/path
          net/url)
 
 (require "config.rkt" "db.rkt" "api-router.rkt")
 
 ;; ============================================================================
-;; Request Processing
+;; Simple HTTP Server using net/tcp
 ;; ============================================================================
 
-(define (request->hash req)
-  "Convert a web-server request to our internal hash format"
-  (define method (bytes->string/utf-8 (request-method req)))
-  (define uri (request-uri req))
-  (define path (path->string (url-path->string (url-path uri))))
-  (define query-string (url-query uri))
+(require racket/tcp)
+
+(define (parse-http-request in)
+  "Parse an HTTP request from input port"
+  (define first-line (read-line in 'any))
+  (when (eof-object? first-line)
+    (error 'parse-http-request "Empty request"))
   
-  ;; Parse headers
-  (define headers
-    (for/hash ([h (request-headers/raw req)])
-      (values (string->symbol (string-downcase (bytes->string/utf-8 (header-field h))))
-              (bytes->string/utf-8 (header-value h)))))
+  (define parts (string-split first-line " "))
+  (define method (car parts))
+  (define path-with-query (cadr parts))
+  
+  ;; Parse path and query string
+  (define path-parts (string-split path-with-query "?"))
+  (define path (car path-parts))
+  (define query-string (if (> (length path-parts) 1) (string-join (cdr path-parts) "?") ""))
   
   ;; Parse query params
   (define query
-    (for/hash ([q query-string])
-      (values (string->symbol (car q)) (cdr q))))
+    (if (equal? query-string "")
+        (hash)
+        (for/hash ([pair (string-split query-string "&")])
+          (define kv (string-split pair "="))
+          (values (string->symbol (car kv)) 
+                  (if (> (length kv) 1) (cadr kv) "")))))
   
-  ;; Parse body
+  ;; Parse headers
+  (define headers
+    (let loop ([headers (hash)])
+      (define line (read-line in 'any))
+      (cond
+        [(or (eof-object? line) (equal? line "") (equal? line "\r"))
+         headers]
+        [else
+         (define colon-pos (string-contains? line ":"))
+         (if colon-pos
+             (loop (hash-set headers 
+                            (string->symbol (string-downcase (string-trim (substring line 0 colon-pos))))
+                            (string-trim (substring line (add1 colon-pos)))))
+             (loop headers))])))
+  
+  ;; Read body if Content-Length header exists
+  (define content-length 
+    (let ([cl (hash-ref headers 'content-length #f)])
+      (and cl (string->number cl))))
+  
   (define body
-    (let ([bindings (request-bindings/raw req)])
-      (if (and bindings (pair? bindings))
-          (bytes->string/utf-8 (binding:form-value (first bindings)))
-          (let ([post-data (request-post-data/raw req)])
-            (if post-data (bytes->string/utf-8 post-data) "")))))
+    (if (and content-length (> content-length 0))
+        (read-string content-length in)
+        ""))
   
   (hash 'method method
         'path path
         'query query
         'headers headers
-        'body body
-        'raw-request req))
+        'body body))
 
-(define (hash->response resp)
-  "Convert our internal response hash to web-server response"
-  (define status (hash-ref resp 'status 200))
-  (define headers-list (hash-ref resp 'headers '()))
-  (define body (hash-ref resp 'body ""))
-  
-  (response/full
-   status
-   (status-code->message status)
-   (current-seconds)
-   #"application/json; charset=utf-8"
-   (for/list ([h headers-list])
-     (header (string->bytes/utf-8 (symbol->string (car h)))
-             (string->bytes/utf-8 (cdr h))))
-   (list (string->bytes/utf-8 body))))
+(define (format-http-response status headers body)
+  "Format an HTTP response"
+  (define status-line 
+    (format "HTTP/1.1 ~a ~a\r\n" status (status-code->message status)))
+  (define header-lines
+    (string-join 
+     (for/list ([(k v) (in-hash headers)])
+       (format "~a: ~a" k v))
+     "\r\n"))
+  (string-append status-line header-lines "\r\nContent-Length: " 
+                 (number->string (string-length body)) "\r\n\r\n" body))
 
 (define (status-code->message code)
   (match code
-    [200 #"OK"]
-    [201 #"Created"]
-    [204 #"No Content"]
-    [400 #"Bad Request"]
-    [401 #"Unauthorized"]
-    [403 #"Forbidden"]
-    [404 #"Not Found"]
-    [405 #"Method Not Allowed"]
-    [429 #"Too Many Requests"]
-    [500 #"Internal Server Error"]
-    [_ #"Unknown"]))
+    [200 "OK"]
+    [201 "Created"]
+    [204 "No Content"]
+    [400 "Bad Request"]
+    [401 "Unauthorized"]
+    [403 "Forbidden"]
+    [404 "Not Found"]
+    [405 "Method Not Allowed"]
+    [429 "Too Many Requests"]
+    [500 "Internal Server Error"]
+    [_ "Unknown"]))
 
 ;; ============================================================================
 ;; CORS Handling
@@ -89,12 +104,12 @@
   "Add CORS headers to response"
   (define existing-headers (hash-ref response 'headers '()))
   (define cors-headers
-    (list (cons 'access-control-allow-origin 
+    (list (cons 'Access-Control-Allow-Origin 
                 (if (equal? allowed-origins '("*")) "*" 
                     (string-join allowed-origins ", ")))
-          (cons 'access-control-allow-methods "GET, POST, PUT, DELETE, OPTIONS")
-          (cons 'access-control-allow-headers "Content-Type, Authorization, X-API-Key")
-          (cons 'access-control-max-age "86400")))
+          (cons 'Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS")
+          (cons 'Access-Control-Allow-Headers "Content-Type, Authorization, X-API-Key")
+          (cons 'Access-Control-Max-Age "86400")))
   (hash-set response 'headers (append existing-headers cors-headers)))
 
 (define (handle-options-request request config)
@@ -104,31 +119,59 @@
   (add-cors-headers (hash 'status 204 'headers '() 'body "") allowed-origins))
 
 ;; ============================================================================
-;; Main Servlet
+;; Request Handler
 ;; ============================================================================
 
-(define (make-service-servlet config)
-  "Create the main servlet handler"
+(define (handle-request request config)
+  "Handle a single HTTP request"
+  (define method (hash-ref request 'method))
   (define allowed-origins (SecurityConfig-allowed-origins 
                            (ServiceConfig-security config)))
   
-  (lambda (req)
-    (define request-hash (request->hash req))
-    (define method (hash-ref request-hash 'method))
+  ;; Handle CORS preflight
+  (if (equal? method "OPTIONS")
+      (handle-options-request request config)
+      ;; Route the request
+      (let ([response (route-request request)])
+        (add-cors-headers response allowed-origins))))
+
+(define (handle-connection in out config)
+  "Handle a TCP connection"
+  (with-handlers ([exn:fail? (λ (e) 
+                               (eprintf "[HTTP] Error: ~a~n" (exn-message e))
+                               (display (format-http-response 
+                                        500 
+                                        (hash 'Content-Type "application/json")
+                                        (jsexpr->string (hash 'error (exn-message e))))
+                                       out))])
+    (define request (parse-http-request in))
+    (define response (handle-request request config))
     
-    ;; Handle CORS preflight
-    (if (equal? method "OPTIONS")
-        (hash->response (handle-options-request request-hash config))
-        ;; Route the request
-        (let ([response (route-request request-hash)])
-          (hash->response (add-cors-headers response allowed-origins))))))
+    (define status (hash-ref response 'status 200))
+    (define headers-list (hash-ref response 'headers '()))
+    (define body (hash-ref response 'body ""))
+    
+    ;; Convert headers list to hash
+    (define headers-hash
+      (for/hash ([h headers-list])
+        (values (car h) (cdr h))))
+    
+    ;; Ensure Content-Type is set
+    (define final-headers 
+      (if (hash-has-key? headers-hash 'Content-Type)
+          headers-hash
+          (hash-set headers-hash 'Content-Type "application/json")))
+    
+    (display (format-http-response status final-headers body) out)
+    (flush-output out)))
 
 ;; ============================================================================
 ;; Server Lifecycle
 ;; ============================================================================
 
-(define current-server-thread (make-parameter #f))
+(define current-server-listener (make-parameter #f))
 (define current-server-shutdown (make-parameter #f))
+(define server-running? (make-parameter #f))
 
 (define (start-service! #:config [config #f] #:port [port #f] #:host [host #f])
   "Start the HTTP service"
@@ -147,26 +190,35 @@
   (eprintf "Default model: ~a~n" (config-default-model))
   (eprintf "========================================~n~n")
   
-  ;; Start server
-  (define stop-server
-    (serve/servlet
-     (make-service-servlet cfg)
-     #:port server-port
-     #:listen-ip server-host
-     #:servlet-path "/"
-     #:servlet-regexp #rx""
-     #:command-line? #t
-     #:launch-browser? #f
-     #:log-file (build-path (find-system-path 'home-dir) ".chrysalis" "service.log")))
+  ;; Start TCP listener
+  (define listener (tcp-listen server-port 128 #t server-host))
+  (current-server-listener listener)
+  (server-running? #t)
   
-  (current-server-shutdown stop-server)
-  stop-server)
+  ;; Accept connections in a loop
+  (let loop ()
+    (when (server-running?)
+      (with-handlers ([exn:fail? (λ (e) 
+                                   (unless (not (server-running?))
+                                     (eprintf "[HTTP] Accept error: ~a~n" (exn-message e))))])
+        (define-values (in out) (tcp-accept listener))
+        ;; Handle in a thread
+        (thread 
+         (λ ()
+           (with-handlers ([exn:fail? (λ (e) (eprintf "[HTTP] Handler error: ~a~n" (exn-message e)))])
+             (handle-connection in out cfg)
+             (close-input-port in)
+             (close-output-port out)))))
+      (loop)))
+  
+  listener)
 
 (define (stop-service!)
   "Stop the HTTP service"
-  (when (current-server-shutdown)
-    ((current-server-shutdown))
-    (current-server-shutdown #f))
+  (server-running? #f)
+  (when (current-server-listener)
+    (tcp-close (current-server-listener))
+    (current-server-listener #f))
   (close-database!))
 
 ;; ============================================================================
@@ -237,3 +289,8 @@
 (define (is-service-running?)
   "Check if service is running"
   (hash-ref (service-status) 'running #f))
+
+;; Export for current-process-id
+(require ffi/unsafe)
+(define current-process-id
+  (get-ffi-obj "getpid" #f (_fun -> _int)))
