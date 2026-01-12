@@ -4,7 +4,7 @@ This directory contains [vhs](https://github.com/charmbracelet/vhs) scripts for 
 
 ## Prerequisites
 
-- [vhs](https://github.com/charmbracelet/vhs) installed (`go install github.com/charmbracelet/vhs@latest`)
+- [vhs](https://github.com/charmbracelet/vhs) installed (`go install github.com/charmbracelet/vhs@latest`)https://freenet.org/resources/manual/tutorial/
 - `ffmpeg` installed
 - `ttyd` installed (optional, but recommended)
 

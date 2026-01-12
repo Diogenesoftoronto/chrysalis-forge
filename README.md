@@ -166,6 +166,32 @@ chrysalis --priority "I'm in a hurry" "Quick summary"
 The system uses **K-Nearest Neighbor search** in a geometric phenotype space to find the elite agent that best matches your stated priorities. Keywords like `fast`, `cheap`, `accurate`, and `concise` are mapped directly; other phrases are interpreted by the LLM to find the optimal trade-off.
 
 The agent can also **set its own priority** mid-task using the `set_priority` tool if it determines that a task requires a different speed/cost profile.
+
+## Documentation
+
+Comprehensive documentation is available in the `doc/` directory:
+
+| Document | Description |
+|----------|-------------|
+| [**THEORY.md**](doc/THEORY.md) | Theoretical foundations — GEPA, MAP-Elites, Grassmann flows, MAKER, Graphiti/Zep, Recursive LMs |
+| [**ARCHITECTURE.md**](doc/ARCHITECTURE.md) | System architecture — layers, data flow, DSPy programming model, phenotype spaces |
+| [**USAGE.md**](doc/USAGE.md) | Usage guide — installation, CLI, tools, modes, security, self-evolution |
+| [**API.md**](doc/API.md) | API reference — data structures, functions, extending the system |
+| [**geometric-decomposition.md**](doc/geometric-decomposition.md) | Deep dive into the geometric decomposition system |
+
+### For Researchers
+
+Start with [THEORY.md](doc/THEORY.md) to understand the research papers that inspired Chrysalis Forge:
+- **GEPA** (arXiv:2507.19457) — Reflective prompt evolution outperforming RL
+- **MAP-Elites** (arXiv:1504.04909) — Quality-diversity optimization
+- **MAKER** (arXiv:2511.09030) — Million-step zero-error reasoning via extreme decomposition
+- **Grassmann Flows** (arXiv:2512.19428) — Geometric alternatives to attention
+- **Graphiti/Zep** (arXiv:2501.13956) — Temporal knowledge graphs for agent memory
+- **Recursive LMs** (arXiv:2512.24601) — Unbounded context via recursive decomposition
+
+### For Developers
+
+Start with [USAGE.md](doc/USAGE.md) for practical usage, then [API.md](doc/API.md) for extension.
  
 ## License
 
