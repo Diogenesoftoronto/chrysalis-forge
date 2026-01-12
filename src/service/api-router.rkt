@@ -4,7 +4,7 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match json racket/port racket/date racket/list)
+(require racket/string racket/match json racket/port racket/date racket/list net/http-client net/url)
 (require "config.rkt" "db.rkt" "auth.rkt" (except-in "key-vault.rkt" sha256-bytes))
 (require "../llm/model-registry.rkt")
 
@@ -430,6 +430,87 @@
                               'object "model"
                               'owned_by "chrysalis-forge")))))))
 
+(define (handle-get-model request)
+  "GET /api/models/{model_name} - Get details for a specific model"
+  (with-handlers ([exn:fail? (λ (e) 
+                               (error-response (format "Failed to fetch model: ~a" (exn-message e)) 
+                                               #:status 500))])
+    (define model-name (get-path-param request 'model_name))
+    (unless model-name
+      (return (error-response "Model name required" #:status 400)))
+    
+    ;; Get API key and base URL - try to detect provider from base URL
+    (define base-url (get-service-base-url "openai"))
+    (define api-key (get-service-key "openai"))
+    
+    ;; Check if base URL contains backboard.io or other providers
+    (define provider
+      (cond
+        [(string-contains? (or base-url "") "backboard.io") "backboard"]
+        [(string-contains? (or base-url "") "openrouter.ai") "openrouter"]
+        [else "openai"]))
+    
+    (define actual-base-url (or base-url "https://api.openai.com/v1"))
+    (define actual-api-key (or api-key (getenv "OPENAI_API_KEY")))
+    
+    (unless actual-api-key
+      (return (error-response "API key not configured" #:status 500)))
+    
+    ;; Build the URL for fetching a specific model
+    ;; Clean trailing slash and remove /api if present (we'll add it back for backboard)
+    (define clean-base 
+      (let ([no-trailing (if (string-suffix? actual-base-url "/")
+                              (substring actual-base-url 0 (sub1 (string-length actual-base-url)))
+                              actual-base-url)])
+        ;; For backboard, remove /api if present since we'll add /api/models
+        (if (and (equal? provider "backboard") (string-suffix? no-trailing "/api"))
+            (substring no-trailing 0 (- (string-length no-trailing) 4))
+            no-trailing)))
+    
+    ;; Always append /api/models for backboard, /models for others
+    (define model-url
+      (if (equal? provider "backboard")
+          (format "~a/api/models/~a" clean-base model-name)
+          (format "~a/models/~a" clean-base model-name)))
+    
+    (define parsed-url (string->url model-url))
+    (define host (url-host parsed-url))
+    (define port (or (url-port parsed-url) (if (equal? (url-scheme parsed-url) "https") 443 80)))
+    (define path-segments (url-path parsed-url))
+    (define path-part (if (null? path-segments)
+                          (format "/models/~a" model-name)
+                          (string-append "/" (string-join (map path/param-path path-segments) "/"))))
+    
+    ;; Use appropriate header format based on provider
+    (define auth-header
+      (if (equal? provider "backboard")
+          (format "X-API-Key: ~a" actual-api-key)
+          (format "Authorization: Bearer ~a" actual-api-key)))
+    
+    (define request-headers (list auth-header
+                                 "Content-Type: application/json"))
+    
+    (define-values (status headers in)
+      (http-sendrecv host path-part
+                     #:port port
+                     #:ssl? (equal? (url-scheme parsed-url) "https")
+                     #:method "GET"
+                     #:headers request-headers))
+    
+    (define status-str (bytes->string/utf-8 status))
+    (define response-body (port->string in))
+    (close-input-port in)
+    
+    (unless (string-prefix? status-str "HTTP/1.1 200")
+      (return (error-response (format "Failed to fetch model: HTTP ~a" status-str) 
+                              #:status (if (string-contains? status-str "404") 404 500))))
+    
+    (define response (with-handlers ([exn:fail? (λ (e)
+                                                   (error (format "Failed to parse response: ~a" (exn-message e))))])
+                       (string->jsexpr response-body)))
+    
+    (json-response response)))
+
 ;; ============================================================================
 ;; Health Check
 ;; ============================================================================
@@ -518,6 +599,12 @@
       ;; OpenAI-compatible endpoints
       [(match-route "POST" "/v1/chat/completions") (handle-chat-completions request)]
       [(match-route "GET" "/v1/models") (handle-list-models request)]
+      [(route-matches? "/api/models/:model_name" path)
+       (let ([request (hash-set request 'path-params 
+                                (extract-path-params "/api/models/:model_name" path))])
+         (match method
+           ["GET" (handle-get-model request)]
+           [_ (error-response "Method not allowed" #:status 405)]))]
       
       ;; Not found
       [else (not-found-response)])))

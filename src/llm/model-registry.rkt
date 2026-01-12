@@ -70,19 +70,22 @@
       (error "API key is required but not provided or is empty"))
     
     (define provider (detect-provider base-url))
-    (define clean-base (if (string-suffix? base-url "/")
-                           (substring base-url 0 (sub1 (string-length base-url)))
-                           base-url))
+    ;; Clean trailing slash and remove /api if present (we'll add it back for backboard)
+    (define clean-base 
+      (let ([no-trailing (if (string-suffix? base-url "/")
+                             (substring base-url 0 (sub1 (string-length base-url)))
+                             base-url)])
+        ;; For backboard, remove /api if present since we'll add /api/models
+        (if (and (eq? provider 'backboard) (string-suffix? no-trailing "/api"))
+            (substring no-trailing 0 (- (string-length no-trailing) 4))
+            no-trailing)))
     
     ;; Build URL and path based on provider
-    ;; For Backboard, check if base already includes /api, if so use /models, otherwise use /api/models
-    ;; Don't use min_context/max_context filters as they're too restrictive (most models have context_limit > 1)
+    ;; Always append /api/models for backboard, /models for others
+    ;; No limit - fetch all available models
     (define models-url
       (if (eq? provider 'backboard)
-          (let ([has-api? (string-contains? clean-base "/api")])
-            (if has-api?
-                (string-append clean-base "/models?skip=0&limit=100")
-                (string-append clean-base "/api/models?skip=0&limit=100")))
+          (string-append clean-base "/api/models")
           (string-append clean-base "/models")))
     
     (define parsed-url (string->url models-url))

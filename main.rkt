@@ -718,7 +718,7 @@ EOF
 (define (repl-loop)
   (check-env-verbose!)
   (verify-env! #:fail #f)
-  (display-figlet-banner "chrysalis forge" "rozzo")
+  (display-figlet-banner "chrysalis forge" "standard")
   (newline)
   (displayln "Type /exit to leave or /help for commands.")
   (handle-new-session "cli" "code")

@@ -4,7 +4,7 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match json racket/port net/http-client net/url racket/tcp racket/system)
+(require racket/string racket/match json racket/port net/http-client net/url racket/tcp racket/system racket/list)
 
 ;; ============================================================================
 ;; Client Configuration
@@ -232,6 +232,54 @@
         (hash-ref m 'id))
       '()))
 
+(define (client-get-model model-name)
+  "Get details for a specific model by name"
+  (define client (current-client))
+  (unless client (error 'client-get-model "Not connected to service"))
+  
+  (define-values (status response)
+    (service-request client "GET" (format "/api/models/~a" model-name)))
+  
+  (if (string-prefix? status "2")
+      response
+      (begin
+        (eprintf "[CLIENT] Failed to get model: ~a~n" 
+                 (hash-ref (hash-ref response 'error (hash)) 'message "Unknown error"))
+        #f)))
+
+(define (levenshtein s1 s2)
+  "Calculate Levenshtein distance between two strings"
+  (let* ([len1 (string-length s1)]
+         [len2 (string-length s2)]
+         [matrix (make-vector (add1 len1))])
+    (for ([i (in-range (add1 len1))])
+      (vector-set! matrix i (make-vector (add1 len2))))
+    (for ([i (in-range (add1 len1))])
+      (vector-set! (vector-ref matrix i) 0 i))
+    (for ([j (in-range (add1 len2))])
+      (vector-set! (vector-ref matrix 0) j j))
+    (for ([i (in-range 1 (add1 len1))])
+      (for ([j (in-range 1 (add1 len2))])
+        (let ([cost (if (char=? (string-ref s1 (sub1 i)) (string-ref s2 (sub1 j))) 0 1)])
+          (vector-set! (vector-ref matrix i) j
+                       (min (add1 (vector-ref (vector-ref matrix (sub1 i)) j))
+                            (add1 (vector-ref (vector-ref matrix i) (sub1 j)))
+                            (+ cost (vector-ref (vector-ref matrix (sub1 i)) (sub1 j))))))))
+    (vector-ref (vector-ref matrix len1) len2)))
+
+(define (find-closest-model search-name model-list)
+  "Find the closest matching model name from a list"
+  (if (null? model-list)
+      #f
+      (let* ([search-lower (string-downcase search-name)]
+             [scored (for/list ([model model-list])
+                       (define model-lower (string-downcase model))
+                       (define distance (levenshtein search-lower model-lower))
+                       (list model distance))]
+             [sorted (sort scored < #:key second)]
+             [best (first sorted)])
+        (first best))))
+
 (define (client-get-user)
   "Get current user info"
   (define client (current-client))
@@ -292,10 +340,10 @@
   (client-create-session! #:mode "code")
   
   ;; Print banner and help
-  (display-figlet-banner "chrysalis forge" "rozzo")
+  (display-figlet-banner "chrysalis forge" "standard")
   (eprintf "~n  Connected to: ~a:~a~n" 
            (ServiceClient-host client) (ServiceClient-port client))
-  (eprintf "Commands: /quit, /models, /sessions, /help~n")
+  (eprintf "Commands: /quit, /models, /models <name>, /sessions, /help~n")
   (eprintf "Type your message to chat with the agent.~n~n")
   
   ;; Main REPL loop
@@ -311,12 +359,35 @@
       [(string-prefix? (string-trim input) "/")
        ;; Handle commands
        (define cmd (string-trim input))
-       (match cmd
-         ["/quit" (eprintf "[CLIENT] Goodbye!~n")]
-         ["/exit" (eprintf "[CLIENT] Goodbye!~n")]
-         ["/models" 
-          (define models (client-get-models))
-          (eprintf "Available models: ~a~n" (string-join models ", "))
+       (cond
+         [(or (equal? cmd "/quit") (equal? cmd "/exit"))
+          (eprintf "[CLIENT] Goodbye!~n")]
+         [(string-prefix? cmd "/models")
+          (define rest (if (>= (string-length cmd) 8)
+                          (string-trim (substring cmd 8))
+                          ""))
+          (if (equal? rest "")
+              ;; No model name provided, just list all models
+              (let ([models (client-get-models)])
+                (if (null? models)
+                    (eprintf "No models available.~n")
+                    (begin
+                      (eprintf "Available models:~n")
+                      (for ([m models])
+                        (eprintf "  - ~a~n" m)))))
+              ;; Model name provided, search and get details
+              (let* ([models (client-get-models)]
+                     [matched (find-closest-model rest models)])
+                (if matched
+                    (let ([model-details (client-get-model matched)])
+                      (eprintf "Found closest match: ~a~n" matched)
+                      (eprintf "Fetching model details...~n")
+                      (if model-details
+                          (eprintf "~a~n" (jsexpr->string model-details #:indent #t))
+                          (eprintf "Failed to fetch model details.~n")))
+                    (begin
+                      (eprintf "No matching model found for '~a'.~n" rest)
+                      (eprintf "Available models: ~a~n" (string-join models ", "))))))
           (loop)]
          ["/sessions"
           (define sessions (client-list-sessions))
@@ -330,10 +401,11 @@
           (eprintf "Commands:~n")
           (eprintf "  /quit     - Exit the client~n")
           (eprintf "  /models   - List available models~n")
+          (eprintf "  /models <name> - Search for a model by name and show details~n")
           (eprintf "  /sessions - List your sessions~n")
           (eprintf "  /help     - Show this help~n")
           (loop)]
-         [_
+         [else
           (eprintf "Unknown command: ~a~n" cmd)
           (loop)])]
       [else
