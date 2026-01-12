@@ -1,10 +1,31 @@
 #lang racket
-(require racket/cmdline json racket/file racket/list "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
+(require racket/cmdline json racket/file racket/list racket/format "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
 
          "src/utils/dotenv.rkt" "src/llm/openai-responses-stream.rkt" "src/llm/openai-client.rkt"
          "src/tools/acp-tools.rkt" "src/core/optimizer-gepa.rkt" "src/stores/trace-store.rkt" "src/tools/rdf-tools.rkt"
          "src/core/process-supervisor.rkt" "src/tools/sandbox-exec.rkt" "src/utils/debug.rkt" "src/llm/pricing-model.rkt"
-         "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt")
+         "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt"
+         "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt")
+
+;; Conditionally require service module (may not exist yet)
+(define service-available?
+  (with-handlers ([exn:fail? (λ (_) #f)])
+    (dynamic-require 'chrysalis-forge/src/service/service-server 'start-service!)
+    #t))
+
+(define (start-service! . args)
+  (if service-available?
+      (apply (dynamic-require 'chrysalis-forge/src/service/service-server 'start-service!) args)
+      (begin
+        (eprintf "[ERROR] Service module not available. Run 'raco pkg install' first.~n")
+        (exit 1))))
+
+(define (run-daemon!)
+  (if service-available?
+      ((dynamic-require 'chrysalis-forge/src/service/service-server 'run-daemon!))
+      (begin
+        (eprintf "[ERROR] Service module not available. Run 'raco pkg install' first.~n")
+        (exit 1))))
 
 (load-dotenv!)
 
@@ -22,10 +43,21 @@
 (define pretty-param (make-parameter (or (getenv "PRETTY") "none")))
 (define session-start-time (current-seconds))
 (define total-session-cost 0.0)
+(define session-input-tokens 0)
+(define session-output-tokens 0)
+(define session-turn-count 0)
+(define session-model-usage (make-hash))
+(define session-tool-usage (make-hash))
 
 (define current-security-level (make-parameter 1))
 (define priority-param (make-parameter (or (getenv "PRIORITY") "best")))
 (define acp-port-param (make-parameter (or (getenv "ACP_PORT") "stdio")))
+
+;; Service mode parameters
+(define serve-port-param (make-parameter (or (getenv "CHRYSALIS_PORT") 8080)))
+(define serve-host-param (make-parameter (or (getenv "CHRYSALIS_HOST") "127.0.0.1")))
+(define daemon-param (make-parameter #f))
+(define config-path-param (make-parameter #f))
 
 (define ACP-MODES
   (list (hash 'slug "ask" 'name "Ask" 'description "Read only.")
@@ -51,8 +83,12 @@
       (values #t res)
       (values #f res)))
 
+(define (record-tool-call! name)
+  (hash-set! session-tool-usage name (add1 (hash-ref session-tool-usage name 0))))
+
 (define (execute-tool name args)
   (log-debug 2 'tool "CALLED: ~a\n  Args: ~v" name args)
+  (record-tool-call! name)
   (with-handlers ([exn:fail? (λ (e) 
                                (log-debug 1 'tool "ERROR: ~a failed: ~a" name (exn-message e))
                                (format "Tool Error: ~a" (exn-message e)))])
@@ -196,6 +232,18 @@
     (define out-tok (hash-ref usage 'completion_tokens 0))
     (define cost (calculate-cost current-model in-tok out-tok))
     (set! total-session-cost (+ total-session-cost cost))
+    
+    (set! session-input-tokens (+ session-input-tokens in-tok))
+    (set! session-output-tokens (+ session-output-tokens out-tok))
+    (set! session-turn-count (add1 session-turn-count))
+
+    ;; Track per-model usage
+    (define model-entry (hash-ref session-model-usage current-model (hash 'in 0 'out 0 'calls 0 'cost 0.0)))
+    (hash-set! session-model-usage current-model
+               (hash 'in (+ (hash-ref model-entry 'in) in-tok)
+                     'out (+ (hash-ref model-entry 'out) out-tok)
+                     'calls (add1 (hash-ref model-entry 'calls))
+                     'cost (+ (hash-ref model-entry 'cost) cost)))
 
     (if (null? res)
       ;; Final turn: Save history back to context, with compaction if needed
@@ -271,7 +319,7 @@
 
 (define (handle-slash-command cmd input)
   (match cmd
-    [(or "exit" "quit") (displayln "Goodbye.") (exit)]
+    [(or "exit" "quit") (print-session-summary!) (displayln "Goodbye.") (exit)]
     ["help" (displayln "Commands:\n  /help - Show this message\n  /exit, /quit - Exit\n  /raco <args> - Run raco commands\n  /config <key> <val> - Set param\n  /init - Initialize project")]
     ["raco" (system (format "raco ~a" (substring input 6)))]
     ["config" 
@@ -376,6 +424,96 @@ EOF
          (printf "Unknown command '/~a'. Did you mean: /~a?\n" cmd (string-join suggestions ", /"))
          (printf "Unknown command '/~a'. Type /help for list.\n" cmd))]))
 
+(define (format-duration seconds)
+  (define mins (quotient seconds 60))
+  (define secs (remainder seconds 60))
+  (if (> mins 0)
+      (format "~am ~as" mins secs)
+      (format "~as" secs)))
+
+(define (format-number n)
+  (define s (number->string n))
+  (define len (string-length s))
+  (if (<= len 3) s
+      (let loop ([i (- len 3)] [acc (substring s (- len 3))])
+        (if (<= i 0)
+            (string-append (substring s 0 i) acc)
+            (loop (- i 3) (string-append "," (substring s (max 0 (- i 3)) i) acc))))))
+
+(define (print-session-summary!)
+  (define duration (- (current-seconds) session-start-time))
+  (define total-tokens (+ session-input-tokens session-output-tokens))
+  
+  ;; Get MCP stats
+  (define mcp-stats (with-handlers ([exn:fail? (λ (_) (hash 'connections 0 'tool_calls 0 'tool_success 0 'tool_failures 0 'clients (hash)))])
+                      (mcp-get-session-stats)))
+  
+  ;; Get lifetime tool stats from eval-store
+  (define lifetime-tools (with-handlers ([exn:fail? (λ (_) (make-hash))])
+                           (get-tool-stats)))
+  
+  (newline)
+  (displayln "───────────────────────────── Session Summary ─────────────────────────────")
+  (printf "Duration        ~a~n" (format-duration duration))
+  (printf "Turns           ~a~n" session-turn-count)
+  (newline)
+  
+  ;; Model usage
+  (unless (hash-empty? session-model-usage)
+    (displayln "Model Usage:")
+    (for ([(model stats) (in-hash session-model-usage)])
+      (printf "  ~a    ~a calls   ~a in · ~a out   $~a~n"
+              (~a model #:width 16)
+              (hash-ref stats 'calls)
+              (format-number (hash-ref stats 'in))
+              (format-number (hash-ref stats 'out))
+              (real->decimal-string (hash-ref stats 'cost) 4)))
+    (newline))
+  
+  ;; Token summary
+  (printf "Tokens          ~a input   ~a output   ~a total~n"
+          (format-number session-input-tokens)
+          (format-number session-output-tokens)
+          (format-number total-tokens))
+  (printf "Cost            $~a~n" (real->decimal-string total-session-cost 4))
+  (newline)
+  
+  ;; Tool usage
+  (unless (hash-empty? session-tool-usage)
+    (displayln "Tools Used:")
+    (define sorted-tools (sort (hash->list session-tool-usage) > #:key cdr))
+    (for ([tool-pair (take sorted-tools (min 10 (length sorted-tools)))])
+      (define name (car tool-pair))
+      (define count (cdr tool-pair))
+      (define lifetime (hash-ref lifetime-tools name 0))
+      (printf "  ~a  ~a call~a~a~n"
+              (~a name #:width 20)
+              count
+              (if (= count 1) "" "s")
+              (if (> lifetime 0) (format "   (~a lifetime)" lifetime) "")))
+    (when (> (length sorted-tools) 10)
+      (printf "  ... and ~a more tools~n" (- (length sorted-tools) 10)))
+    (newline))
+  
+  ;; MCP stats
+  (when (> (hash-ref mcp-stats 'connections 0) 0)
+    (displayln "MCP:")
+    (define clients (hash-ref mcp-stats 'clients (hash)))
+    (unless (hash-empty? clients)
+      (printf "  Clients: ~a~n"
+              (string-join (for/list ([(name stats) (in-hash clients)])
+                             (format "~a (~a)" name (hash-ref stats 'calls 0)))
+                           ", ")))
+    (printf "  Tool calls: ~a total   ~a success · ~a failure~n"
+            (hash-ref mcp-stats 'tool_calls 0)
+            (hash-ref mcp-stats 'tool_success 0)
+            (hash-ref mcp-stats 'tool_failures 0))
+    (when (> (hash-ref mcp-stats 'connection_failures 0) 0)
+      (printf "  Connection failures: ~a~n" (hash-ref mcp-stats 'connection_failures 0)))
+    (newline))
+  
+  (displayln "──────────────────────────────────────────────────────────────────────────"))
+
 (define (repl-loop)
   (verify-env! #:fail #f)
   (displayln "Welcome to Chrysalis Forge Interactive Mode.")
@@ -413,8 +551,15 @@ EOF
                                [(equal? level "verbose") (current-debug-level 2)]
                                [val (current-debug-level val)]
                                [else (current-debug-level 1)]))]
+              [("-m" "--model") m "Set LLM Model (e.g., gpt-5.2, o1-preview)" (model-param m)]
               [("-p" "--priority") p "Set Runtime Priority (e.g., 'fast', 'cheap', or 'I need accuracy')" (priority-param p)]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
+              ;; Service mode options
+              [("--serve") "Start HTTP service" (mode-param 'serve)]
+              [("--serve-port") port "Service port (default: 8080)" (serve-port-param (string->number port))]
+              [("--serve-host") host "Service bind address (default: 127.0.0.1)" (serve-host-param host)]
+              [("--daemonize") "Run as background daemon" (daemon-param #t)]
+              [("--config") path "Config file path (default: chrysalis.toml)" (config-path-param path)]
               #:args raw-args
               (match (mode-param)
                 ['run (begin
@@ -445,4 +590,9 @@ EOF
                  (eprintf "Priority: ~a~n" (priority-param))
                  (eprintf "====================================~n")
                  (eprintf "Listening for JSON-RPC messages...~n~n")
-                 (acp-serve #:modes ACP-MODES #:on-new-session handle-new-session #:run-turn acp-run-turn)]))
+                 (acp-serve #:modes ACP-MODES #:on-new-session handle-new-session #:run-turn acp-run-turn)]
+                ['serve
+                 ;; HTTP Service Mode
+                 (if (daemon-param)
+                     (run-daemon!)
+                     (start-service! #:port (serve-port-param) #:host (serve-host-param)))]))
