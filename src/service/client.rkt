@@ -4,13 +4,27 @@
 
 (provide (all-defined-out))
 
-(require racket/string racket/match json racket/port net/http-client net/url racket/tcp)
+(require racket/string racket/match json racket/port net/http-client net/url racket/tcp racket/system)
 
 ;; ============================================================================
 ;; Client Configuration
 ;; ============================================================================
 
 (define DEFAULT-SERVICE-URL "http://127.0.0.1:8080")
+
+(define (display-figlet-banner text font)
+  "Display ASCII art banner using figlet. Falls back to plain text if figlet is not available."
+  (define figlet-path (find-executable-path "figlet"))
+  (if figlet-path
+      (let ([cmd (list figlet-path "-f" font text)])
+        (with-handlers ([exn:fail? (λ (e) (displayln text))])
+          (define-values (sp stdout stdin stderr)
+            (apply subprocess (current-output-port) #f (current-error-port) cmd))
+          (subprocess-wait sp)
+          (define exit-code (subprocess-status sp))
+          (when (not (equal? exit-code 0))
+            (displayln text))))
+      (displayln text)))
 
 (struct ServiceClient (host port api-key session-id) #:transparent #:mutable)
 
@@ -277,12 +291,10 @@
   ;; Create a session
   (client-create-session! #:mode "code")
   
-  ;; Print help
-  (eprintf "~n========================================~n")
-  (eprintf "  Chrysalis Forge Client~n")
-  (eprintf "  Connected to: ~a:~a~n" 
+  ;; Print banner and help
+  (display-figlet-banner "chrysalis forge" "rozzo")
+  (eprintf "~n  Connected to: ~a:~a~n" 
            (ServiceClient-host client) (ServiceClient-port client))
-  (eprintf "========================================~n")
   (eprintf "Commands: /quit, /models, /sessions, /help~n")
   (eprintf "Type your message to chat with the agent.~n~n")
   

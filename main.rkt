@@ -302,6 +302,20 @@
 
 (require racket/system)
 
+(define (display-figlet-banner text font)
+  "Display ASCII art banner using figlet. Falls back to plain text if figlet is not available."
+  (define figlet-path (find-executable-path "figlet"))
+  (if figlet-path
+      (let ([cmd (list figlet-path "-f" font text)])
+        (with-handlers ([exn:fail? (λ (e) (displayln text))])
+          (define-values (sp stdout stdin stderr)
+            (apply subprocess (current-output-port) #f (current-error-port) cmd))
+          (subprocess-wait sp)
+          (define exit-code (subprocess-status sp))
+          (when (not (equal? exit-code 0))
+            (displayln text))))
+      (displayln text)))
+
 (define (levenshtein s1 s2)
   (let* ([len1 (string-length s1)]
          [len2 (string-length s2)]
@@ -533,7 +547,8 @@ EOF
 
 (define (repl-loop)
   (verify-env! #:fail #f)
-  (displayln "Welcome to Chrysalis Forge Interactive Mode.")
+  (display-figlet-banner "chrysalis forge" "rozzo")
+  (newline)
   (displayln "Type /exit to leave or /help for commands.")
   (handle-new-session "cli" "code")
   (let loop ()

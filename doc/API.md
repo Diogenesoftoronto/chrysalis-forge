@@ -1,43 +1,25 @@
-# Chrysalis Forge API Reference & Extension Guide
+# Chrysalis Forge API Reference
 
-This document provides a comprehensive API reference for developers who want to extend Chrysalis Forge or use its components programmatically.
-
-## Table of Contents
-
-1. [Core Data Structures](#1-core-data-structures)
-2. [Core Functions](#2-core-functions)
-3. [Geometric Decomposition API](#3-geometric-decomposition-api)
-4. [Evolution API](#4-evolution-api)
-5. [Context Store API](#5-context-store-api)
-6. [Eval Store API](#6-eval-store-api)
-7. [Adding Custom Tools](#7-adding-custom-tools)
-8. [Creating Custom Modules](#8-creating-custom-modules)
-9. [Custom Optimization Strategies](#9-custom-optimization-strategies)
-10. [Integration Examples](#10-integration-examples)
+This document provides the programming interface for developers who want to extend Chrysalis Forge or embed its components in other systems. Rather than a dry enumeration of function signatures, we'll walk through the API by explaining what problems each component solves and how to use it effectively.
 
 ---
 
-## 1. Core Data Structures
+## The DSPy Core: Typed LLM Interactions
 
-All core structures are defined in `src/llm/dspy-core.rkt` and exported via `(provide (all-defined-out))`.
+The foundation of Chrysalis Forge's programming model lives in `src/llm/dspy-core.rkt`. This module provides the abstractions that turn ad-hoc LLM prompting into structured, typed function calls.
 
-### Signatures and Fields
+### Signatures: Declaring What Goes In and Out
+
+A `Signature` declares the interface of an LLM task—what inputs it expects and what outputs it produces. This explicitness enables validation, composition, and optimization.
 
 ```racket
 (struct SigField (name pred) #:transparent)
 (struct Signature (name ins outs) #:transparent)
 ```
 
-**SigField** represents a single input or output field:
-- `name`: Symbol identifying the field
-- `pred`: Predicate function for validation (e.g., `string?`, `number?`)
+Each field has a `name` (a symbol) and a `pred` (a predicate function like `string?` or `number?`). The predicate isn't just documentation—it's used to validate responses.
 
-**Signature** defines the interface of a task:
-- `name`: Symbol name for the signature
-- `ins`: List of `SigField` for inputs
-- `outs`: List of `SigField` for outputs
-
-#### Creating Signatures with the `signature` Macro
+Creating signatures by hand is tedious, so a macro provides cleaner syntax:
 
 ```racket
 (define MySig 
@@ -46,229 +28,284 @@ All core structures are defined in `src/llm/dspy-core.rkt` and exported via `(pr
     (out [answer string?] [confidence number?])))
 ```
 
-The macro automatically wraps field definitions into `SigField` structs.
+This creates a signature named `MyTask` with two string inputs (`query` and `context`) and two outputs (`answer` as string, `confidence` as number).
 
-### Modules
+The signature becomes the contract that the rest of the system relies on. When you run a module, the outputs are parsed and validated against the signature. If the LLM returns malformed output, you find out immediately rather than having corruption propagate through your system.
+
+### Modules: Wrapping Signatures with Execution Strategy
+
+A `Module` pairs a signature with instructions and execution strategy:
 
 ```racket
 (struct Module (id sig strategy instructions demos params) #:transparent)
 ```
 
-- `id`: Unique string identifier (auto-generated if not provided)
-- `sig`: The `Signature` this module implements
-- `strategy`: Either `'predict` or `'cot` (chain-of-thought)
-- `instructions`: String prompt instructions
-- `demos`: List of few-shot example hashes
-- `params`: Hash of additional parameters (e.g., `'temperature`)
+The `strategy` determines how the prompt is structured. Two strategies are available:
 
-#### Module Constructors
+**Predict** (`'predict`) generates output directly. It's fast and works well for straightforward tasks.
 
-```racket
-;; Direct prediction - fastest, simplest
-(define (Predict sig 
-                 #:id [id #f] 
-                 #:instructions [inst ""] 
-                 #:demos [demos '()] 
-                 #:params [p (hash)]) → Module)
+**ChainOfThought** (`'cot`) instructs the model to reason step-by-step before producing output. This often improves accuracy on complex tasks at the cost of additional tokens.
 
-;; Chain-of-Thought - structured reasoning before output
-(define (ChainOfThought sig 
-                        #:id [id #f] 
-                        #:instructions [inst ""] 
-                        #:demos [demos '()] 
-                        #:params [p (hash)]) → Module)
-```
-
-#### Module Modifiers
+Creating modules uses constructor functions:
 
 ```racket
-(define (module-set-instructions m s) → Module)
-(define (module-set-demos m d) → Module)
+;; Simple direct prediction
+(define summarizer
+  (Predict SummarizeSig
+    #:instructions "Summarize the input text concisely."))
+
+;; Chain-of-thought reasoning
+(define analyzer
+  (ChainOfThought AnalysisSig
+    #:instructions "Analyze the code for potential issues. Think through each consideration."
+    #:demos (list (hash 'input "example code" 
+                        'thought "First I notice..."
+                        'analysis "The code has..."))))
 ```
 
-### Module Archives
+The `demos` parameter provides few-shot examples. Each demo is a hash mapping field names to values, showing the model what good input/output pairs look like. Including a few well-chosen demos often improves quality dramatically.
+
+The `params` hash passes additional settings like temperature:
+
+```racket
+(define creative-module
+  (Predict CreativeSig
+    #:instructions "Generate creative variations."
+    #:params (hash 'temperature 0.9)))
+```
+
+### Module Archives: Collections for Priority-Based Selection
+
+When you compile a module (optimizing it via MAP-Elites), you get back a `ModuleArchive` containing multiple variants:
 
 ```racket
 (struct ModuleArchive (id sig archive point-cloud default-id) #:transparent)
 ```
 
-A `ModuleArchive` stores multiple evolved variants of a module for priority-based selection:
+The `archive` hash maps bin keys to (score, module) pairs. Bin keys are lists like `'(cheap fast compact)` describing the phenotype bin. This enables fast lookup when someone asks for "the cheap one."
 
-- `id`: Base module identifier
-- `sig`: The signature all variants implement
-- `archive`: Hash of `bin-key → (cons score module)` for discrete bins
-- `point-cloud`: List of `(cons Phenotype Module)` for KNN geometric search
-- `default-id`: Key of the best-performing variant
+The `point-cloud` is a list of (phenotype, module) pairs for continuous KNN search. When someone asks for "something balanced between speed and accuracy," geometric search finds the best match.
 
-**Bin keys** are lists like `'(cheap fast compact)` or `'(premium slow verbose)`.
-
-### Phenotypes
+You rarely create archives directly—they're produced by the `compile!` function. But you consume them by passing them to `run-module`:
 
 ```racket
-(struct Phenotype (accuracy latency cost usage) #:transparent)
+;; Run with automatic selection based on context priority
+(define result (run-module my-archive ctx inputs send!))
 ```
 
-Phenotypes represent modules in a 4D continuous space:
-- `accuracy`: Score from 0-10 (higher is better)
-- `latency`: Response time in milliseconds
-- `cost`: API cost in dollars
-- `usage`: Total token count
+The `run-module` function examines the `priority` in the context and selects the appropriate variant.
 
-### Context
+### Contexts: Runtime State
+
+The `Ctx` structure carries all runtime state for an agent:
 
 ```racket
 (struct Ctx (system memory tool-hints mode priority history compacted-summary) #:transparent)
 ```
 
-- `system`: System prompt string
-- `memory`: Working memory/scratchpad string
-- `tool-hints`: Guidance on tool usage
-- `mode`: Operational mode symbol (`'ask`, `'architect`, `'code`, `'semantic`)
-- `priority`: Symbol (`'fast`, `'cheap`, `'best`) or natural language string
-- `history`: List of conversation messages
-- `compacted-summary`: Summarized older conversation turns
+Each field serves a specific purpose:
 
-#### Context Macro
+**system** is the system prompt—the core instructions defining agent behavior. This is what GEPA evolves.
+
+**memory** is a working scratchpad for temporary state within a task.
+
+**tool-hints** provides guidance about tool usage that doesn't belong in the system prompt.
+
+**mode** gates tool access (`'ask`, `'architect`, `'code`, `'semantic`).
+
+**priority** specifies the performance profile—either a symbol (`'fast`, `'cheap`, `'best`) or a natural language string.
+
+**history** contains the conversation so far as a list of messages.
+
+**compacted-summary** holds a compressed summary of prior context when history grows too long.
+
+A convenience macro creates contexts with sensible defaults:
 
 ```racket
-(ctx)  ; Default context
-(ctx #:system "Custom system prompt")
-(ctx #:system s #:memory m #:tool-hints t #:mode mo #:priority p #:history h #:compacted c)
+(define my-ctx
+  (ctx #:system "You are a helpful coding assistant."
+       #:mode 'code
+       #:priority 'best))
 ```
 
-### Run Results
+### Running Modules
+
+The `run-module` function executes a module (or selects from an archive and executes):
+
+```racket
+(define (run-module m ctx inputs send! #:trace [tr #f] #:cache? [cache? #t]) → RunResult)
+```
+
+The `inputs` parameter is a hash mapping input field names to values. The `send!` parameter is a function that actually calls the LLM—this abstraction allows different backends.
+
+The result is a `RunResult`:
 
 ```racket
 (struct RunResult (ok? outputs raw prompt meta) #:transparent)
 ```
 
-- `ok?`: Boolean success indicator
-- `outputs`: Hash of parsed output fields
-- `raw`: Raw response string from LLM
-- `prompt`: The rendered prompt sent to the LLM
-- `meta`: Hash with `'elapsed_ms`, `'model`, `'prompt_tokens`, `'completion_tokens`
+If `ok?` is true, `outputs` contains a hash of output field values. If false, something went wrong—the raw response is still available in `raw` for debugging.
+
+The `meta` hash includes execution metadata: elapsed time, token counts, model used. This feeds into phenotype extraction for evolution.
 
 ---
 
-## 2. Core Functions
+## Geometric Selection: Finding the Right Variant
 
-### Module Execution
+The `src/llm/dspy-selector.rkt` module handles priority-based selection from module archives.
 
-```racket
-(define (run-module m ctx inputs send! 
-                    #:trace [tr #f] 
-                    #:cache? [cache? #t]) → RunResult)
-```
+### Phenotypes and Distance
 
-Executes a module or module archive:
-- `m`: `Module` or `ModuleArchive`
-- `ctx`: Execution context
-- `inputs`: Hash of input field values
-- `send!`: Function `(prompt) → (values ok? raw meta)`
-- `tr`: Optional trace callback
-- `cache?`: Whether to cache results
-
-**Priority-based selection** for `ModuleArchive`:
-- Symbol priorities (`'fast`, `'cheap`, `'compact`, `'verbose`): Uses bin matching
-- `'best`: Uses the default (highest scoring) variant
-- String priorities: Uses geometric KNN selection
-
-**Vision support**: If inputs contain image URLs (starting with `data:image` or ending in `.png`/`.jpg`), the prompt is formatted with image content blocks.
-
-### Elite Selection (from `src/llm/dspy-selector.rkt`)
+A `Phenotype` represents position in a 4D performance space:
 
 ```racket
-(define (select-elite archive target) → Module)
+(struct Phenotype (accuracy latency cost usage) #:transparent)
 ```
 
-Selects the module closest to `target` phenotype using KNN (k=1) in normalized phenotype space.
+Each dimension is continuous. Distance between phenotypes uses Euclidean metric:
 
 ```racket
-(define (text->vector text [send!]) → Phenotype)
+(define (phenotype-distance p1 p2)
+  (sqrt (+ (expt (- (Phenotype-accuracy p1) (Phenotype-accuracy p2)) 2)
+           (expt (- (Phenotype-latency p1) (Phenotype-latency p2)) 2)
+           (expt (- (Phenotype-cost p1) (Phenotype-cost p2)) 2)
+           (expt (- (Phenotype-usage p1) (Phenotype-usage p2)) 2))))
 ```
 
-Converts natural language priority to a target phenotype:
-- First tries keyword matching (fast, cheap, accurate, concise, etc.)
-- Falls back to LLM interpretation if no keywords match
-
-```racket
-(define (phenotype-distance p1 p2) → number?)
-```
-
-Euclidean distance between two phenotypes.
+Raw phenotypes have incompatible scales, so normalization is essential:
 
 ```racket
 (define (normalize-phenotype pheno mins maxs) → Phenotype)
 ```
 
-Normalizes a phenotype to [0,1] range for fair distance comparison.
+This maps each dimension to [0,1] based on the observed range in the point cloud.
 
-### Scoring
+### Selecting Elites
+
+The `select-elite` function finds the closest module to a target phenotype:
 
 ```racket
-(define (score-result expected rr) → number?)
+(define (select-elite archive target) → Module)
 ```
 
-Computes a composite score:
+It normalizes all phenotypes in the point cloud, normalizes the target, computes distances, and returns the nearest match.
+
+### Mapping Natural Language to Phenotypes
+
+The `text->vector` function interprets priority descriptions:
+
+```racket
+(define (text->vector text [send! #f]) → Phenotype)
 ```
-score = accuracy - latency_penalty - cost_penalty
+
+For recognized keywords ("fast", "cheap", "accurate"), it returns hardcoded phenotypes. For novel descriptions, it calls the LLM to interpret the request, returning a phenotype that captures the user's preferences.
+
+This enables natural language priority specification:
+
+```racket
+(define target (text->vector "I need accuracy but cost matters" send!))
+(define best-module (select-elite archive target))
 ```
-- `accuracy`: 10.0 if outputs match expected, 0.0 otherwise
-- `latency_penalty`: Up to 2.0 for responses taking 10+ seconds
-- `cost_penalty`: $0.001 → 1.0 penalty
 
 ---
 
-## 3. Geometric Decomposition API
+## Geometric Decomposition: Breaking Down Complex Tasks
 
-Defined in `src/core/geometric-decomposition.rkt`. Provides task decomposition with explosion detection and checkpoint/rollback.
+The `src/core/geometric-decomposition.rkt` module implements MAKER-inspired task decomposition with self-regulation.
 
-### Phenotype Operations
+### The Decomposition Phenotype
+
+Task decomposition has its own phenotype space:
 
 ```racket
-(struct DecompositionPhenotype (depth breadth accumulated-cost context-size success-rate) #:transparent)
-
-(define (make-initial-phenotype) → DecompositionPhenotype)
-;; Returns: (DecompositionPhenotype 0 0 0 0 1.0)
-
-(define (update-phenotype pheno
-                          #:depth [d #f]
-                          #:breadth [b #f]
-                          #:cost [c #f]
-                          #:context [ctx #f]
-                          #:success [sr #f]) → DecompositionPhenotype)
-
-(define (phenotype+ p1 p2) → DecompositionPhenotype)
-;; Combines phenotypes: max depth/breadth, sum costs/context, average success-rate
+(struct DecompositionPhenotype 
+  (depth breadth accumulated-cost context-size success-rate) 
+  #:transparent)
 ```
+
+These five dimensions capture the shape of a decomposition:
+
+- **depth**: levels of subtask nesting
+- **breadth**: maximum parallel fan-out
+- **accumulated-cost**: total $ spent so far
+- **context-size**: peak context tokens
+- **success-rate**: fraction of subtasks succeeding
 
 ### Limits and Explosion Detection
 
-```racket
-(struct DecompositionLimits (max-depth max-breadth max-cost max-context min-success-rate) #:transparent)
+Limits constrain how far decomposition can go:
 
+```racket
+(struct DecompositionLimits 
+  (max-depth max-breadth max-cost max-context min-success-rate) 
+  #:transparent)
+```
+
+The `limits-for-priority` function returns appropriate limits based on task priority:
+
+```racket
 (define (limits-for-priority priority budget context-limit) → DecompositionLimits)
 ```
 
-Priority-based limit presets:
-| Priority | max-depth | max-breadth | max-cost | max-context | min-success |
-|----------|-----------|-------------|----------|-------------|-------------|
-| `'critical` | 10 | 20 | budget×2 | limit×1.5 | 0.6 |
-| `'high` | 8 | 15 | budget×1.5 | limit | 0.7 |
-| `'normal` | 6 | 10 | budget | limit×0.8 | 0.75 |
-| `'low` | 4 | 6 | budget×0.5 | limit×0.5 | 0.8 |
+Critical tasks get generous limits; low-priority tasks are constrained.
+
+Explosion detection checks all dimensions:
 
 ```racket
-(define (detect-explosion phenotype limits) → (or/c 'depth 'breadth 'cost 'context 'low-success #f))
+(define (detect-explosion phenotype limits) → (or/c symbol? #f))
 ```
 
-Returns the type of explosion detected, or `#f` if within limits.
+Returns `'depth`, `'breadth`, `'cost`, `'context`, or `'low-success` if any limit is exceeded, `#f` otherwise.
+
+### State Management
+
+Decomposition state is mutable (for efficiency with large trees):
+
+```racket
+(struct DecompositionState 
+  (root-task task-type priority tree phenotype limits checkpoints steps-taken meta) 
+  #:transparent #:mutable)
+```
+
+Create initial state with:
+
+```racket
+(define (make-decomposition-state root-task task-type priority limits) → DecompositionState)
+```
+
+### Checkpoint and Rollback
+
+Before risky operations, save a checkpoint:
+
+```racket
+(define (checkpoint! state reason) → DecompositionState)
+```
+
+If explosion is detected, roll back:
+
+```racket
+(define (rollback! state) → DecompositionState)
+```
+
+Check if rollback is possible:
+
+```racket
+(define (has-checkpoints? state) → boolean?)
+```
+
+This checkpoint/rollback mechanism is what enables exploration of multiple decomposition strategies without committing irrevocably.
 
 ### Tree Operations
 
+The decomposition tree uses `DecompNode` structures:
+
 ```racket
 (struct DecompNode (id task status children result profile) #:transparent #:mutable)
+```
 
+Operations for tree manipulation:
+
+```racket
 (define (make-root-node task) → DecompNode)
 (define (add-child! parent-node child-node) → void?)
 (define (node-depth node tree) → integer?)
@@ -278,520 +315,300 @@ Returns the type of explosion detected, or `#f` if within limits.
 (define (prune-node! node) → void?)
 ```
 
-### Checkpoint/Rollback
-
-```racket
-(struct DecompositionCheckpoint (tree-snapshot phenotype step-index reason) #:transparent)
-
-(define (checkpoint! state reason) → DecompositionState)
-(define (rollback! state) → DecompositionState)
-(define (has-checkpoints? state) → boolean?)
-```
-
-### State Management
-
-```racket
-(struct DecompositionState (root-task task-type priority tree phenotype limits checkpoints steps-taken meta) 
-  #:transparent #:mutable)
-
-(define (make-decomposition-state root-task task-type priority limits) → DecompositionState)
-```
+These enable building the task tree as decomposition proceeds, computing phenotype dimensions, and pruning failed branches.
 
 ---
 
-## 4. Evolution API
+## Evolution: Improving Over Time
 
-### GEPA Evolution (from `src/core/optimizer-gepa.rkt`)
+The `src/core/optimizer-gepa.rkt` module implements reflective prompt evolution.
+
+### GEPA Evolution
 
 ```racket
 (define (gepa-evolve! feedback [model "gpt-5.2"]) → string?)
 ```
 
-Evolves the active context's system prompt based on feedback:
-1. Loads the current active context
-2. Sends current system prompt + feedback to meta-optimizer
-3. Creates a new context variant with the evolved prompt
-4. Returns `"Context Evolved."` or `"Evolution Failed."`
+Takes natural language feedback about what's wrong, loads the current context, asks an LLM to produce an improved prompt, and saves the result. Returns "Context Evolved." on success.
+
+Example:
+
+```racket
+(gepa-evolve! "The agent produces overly verbose explanations. It should be more concise.")
+```
+
+### Meta-Evolution
 
 ```racket
 (define (gepa-meta-evolve! feedback [model "gpt-5.2"]) → string?)
 ```
 
-Evolves the optimizer itself by rewriting the meta-prompt stored at `~/.agentd/meta_prompt.txt`.
-
-### Meta-Optimization (from `src/core/optimizer-meta.rkt`)
-
-```racket
-(define OptSig 
-  (signature Opt 
-    (in [inst string?] [fails string?]) 
-    (out [thought string?] [new_inst string?])))
-
-(define (make-meta-optimizer) → Module)
-;; Creates a ChainOfThought module for instruction optimization
-
-(define (meta-optimize-module target ctx trainset send!) → (values Module string?))
-```
-
-The meta-optimizer:
-1. Identifies failing examples (score < 9.0)
-2. Sends current instructions + failures to the optimizer module
-3. Returns the improved module and status message
+Evolves the optimizer's own instructions. This is the recursive self-improvement loop—when the optimization process itself can be improved, meta-evolution handles it.
 
 ---
 
-## 5. Context Store API
+## Sub-Agent Management
 
-Defined in `src/stores/context-store.rkt`. Manages persistent context sessions.
+The `src/core/sub-agent.rkt` module enables parallel task execution.
 
-### Loading and Saving
+### Tool Profiles
 
-```racket
-(define (load-ctx) → hash?)
-;; Returns: (hash 'active symbol? 'items (hash symbol? Ctx?))
-
-(define (save-ctx! db) → void?)
-```
-
-Contexts are stored at `~/.agentd/context.json`.
-
-### Active Context
+Four profiles restrict tool access for sub-agents:
 
 ```racket
-(define (ctx-get-active) → Ctx?)
+(define PROFILE-EDITOR
+  '("read_file" "write_file" "patch_file" "preview_diff" "list_dir"))
+
+(define PROFILE-RESEARCHER
+  '("read_file" "list_dir" "grep_code" "web_search" "web_fetch" "web_search_news"))
+
+(define PROFILE-VCS
+  '("git_status" "git_diff" "git_log" "git_commit" "git_checkout"
+    "jj_status" "jj_log" "jj_diff" "jj_undo" "jj_op_log" "jj_op_restore"
+    "jj_workspace_add" "jj_workspace_list" "jj_describe" "jj_new"))
+
+(define PROFILE-ALL #f)  ; No filtering
 ```
 
-Returns the active context with project rules appended if `.agentd/rules.md` exists in the current directory.
-
-### Session Management
+Get a profile by name:
 
 ```racket
-(define (session-list) → (values list? symbol?))
-;; Returns: (values session-names active-session)
-
-(define (session-create! name [mode 'code]) → void?)
-(define (session-switch! name) → void?)
-(define (session-delete! name) → void?)
+(define (get-tool-profile name) → (or/c list? #f))
 ```
+
+Filter tools:
+
+```racket
+(define (filter-tools-by-names all-tools allowed-names) → list?)
+```
+
+### Spawning and Awaiting
+
+Spawn a sub-agent:
+
+```racket
+(define (spawn-sub-agent! prompt run-fn 
+                          #:context [context ""] 
+                          #:profile [profile 'all]) → string?)
+```
+
+Returns a task ID. The `run-fn` is a function `(prompt context tools-filter) -> result` that executes the task.
+
+Wait for completion:
+
+```racket
+(define (await-sub-agent! id) → any/c)
+```
+
+Blocks until the sub-agent finishes, returns its result.
+
+Check status without blocking:
+
+```racket
+(define (sub-agent-status id) → hash?)
+```
+
+Returns a hash with `'status` (`'running`, `'done`, or `'error`), `'profile`, and optionally `'result`.
 
 ---
 
-## 6. Eval Store API
+## Extending with Custom Tools
 
-Defined in `src/stores/eval-store.rkt`. Tracks sub-agent performance for learning.
+Tools are defined in `src/tools/acp-tools.rkt`. Adding a new tool involves two steps.
 
-### Logging Evaluations
+### Step 1: Define the Schema
 
-```racket
-(define (log-eval! #:task-id task-id 
-                   #:success? success? 
-                   #:profile profile
-                   #:task-type [task-type "unknown"]
-                   #:tools-used [tools-used '()]
-                   #:duration-ms [duration-ms 0]
-                   #:feedback [feedback ""]) → void?)
-```
-
-Appends to `~/.agentd/evals.jsonl` and updates aggregate stats.
-
-### Querying Statistics
-
-```racket
-(define (get-profile-stats [profile #f]) → hash?)
-;; Returns stats for one profile or all profiles
-;; Each profile has: 'total, 'success, 'success_rate, 'task_types, 'tool_freq
-
-(define (get-tool-stats) → hash?)
-;; Returns aggregated tool usage frequency across all profiles
-```
-
-### Profile Recommendation
-
-```racket
-(define (suggest-profile task-type) → (values symbol? number?))
-;; Returns: (values best-profile success-rate)
-```
-
-Suggests the optimal profile based on historical success rates for the given task type.
-
-### Profile Evolution
-
-```racket
-(define (evolve-profile! profile-name #:threshold [threshold 0.7]) → hash?)
-;; Returns analysis with:
-;; - 'profile: the profile name
-;; - 'success_rate: current rate
-;; - 'recommended_tools: top 5 most-used tools
-;; - 'evaluation: "stable" or "needs_improvement"
-```
-
----
-
-## 7. Adding Custom Tools
-
-Tools are defined in `src/tools/acp-tools.rkt`.
-
-### Tool Definition Structure
-
-Each tool is a hash with:
-```racket
-(hash 'type "function"
-      'function (hash 'name "tool_name"
-                      'description "What the tool does"
-                      'parameters (hash 'type "object"
-                                        'properties (hash 'param1 (hash 'type "string" 
-                                                                        'description "param description")
-                                                          ...)
-                                        'required '("param1" ...))))
-```
-
-### Mode Gating
-
-Tools can be restricted by security level in `execute-acp-tool`:
-```racket
-(if (>= security-level 2)
-    (do-the-thing ...)
-    "Permission Denied: Requires security level 2.")
-```
-
-Security levels:
-- Level 1 (`'ask` mode): Read-only operations
-- Level 2 (`'code` mode): File writes, git commits, system changes
-
-### Example: Adding a New Tool
-
-**Step 1: Define the tool metadata** in `make-acp-tools`:
+Add to the list returned by `make-acp-tools`:
 
 ```racket
 (hash 'type "function"
       'function (hash 'name "my_custom_tool"
-                      'description "Does something useful"
+                      'description "Does something useful with the input"
                       'parameters (hash 'type "object"
-                                        'properties (hash 'input (hash 'type "string" 
-                                                                       'description "Input data")
-                                                          'flag (hash 'type "boolean" 
-                                                                      'description "Optional flag"))
+                                        'properties 
+                                        (hash 'input (hash 'type "string" 
+                                                           'description "The input to process")
+                                              'verbose (hash 'type "boolean"
+                                                             'description "Enable verbose output"))
                                         'required '("input"))))
 ```
 
-**Step 2: Implement the handler** in `execute-acp-tool`:
+The schema uses JSON Schema format. Required parameters go in the `required` list.
+
+### Step 2: Implement the Handler
+
+Add a case to the `execute-acp-tool` match expression:
 
 ```racket
 ["my_custom_tool"
- (define input (hash-ref args 'input))
- (define flag (hash-ref args 'flag #f))
- (if flag
-     (process-with-flag input)
-     (process-without-flag input))]
+ (if (>= security-level 1)  ; Require at least level 1
+     (my-tool-implementation (hash-ref args 'input)
+                             (hash-ref args 'verbose #f))
+     "Permission Denied: Requires Level 1.")]
 ```
 
-**Step 3: Add mode permissions** if needed:
+The security check is important—decide what level your tool requires and enforce it.
+
+### Example: A Code Metrics Tool
+
+Here's a complete example adding a tool that counts lines of code:
 
 ```racket
-["my_custom_tool"
- (if (>= security-level 2)
-     (begin
-       (define input (hash-ref args 'input))
-       (do-something-destructive input))
-     "Permission Denied: Requires security level 2.")]
+;; Schema (in make-acp-tools)
+(hash 'type "function"
+      'function (hash 'name "count_lines"
+                      'description "Count lines of code in a file"
+                      'parameters (hash 'type "object"
+                                        'properties 
+                                        (hash 'path (hash 'type "string" 
+                                                          'description "Path to file"))
+                                        'required '("path"))))
+
+;; Handler (in execute-acp-tool)
+["count_lines"
+ (if (>= security-level 1)
+     (let ([content (file->string (hash-ref args 'path))])
+       (define lines (length (string-split content "\n")))
+       (define non-blank (length (filter (λ (s) (not (string=? (string-trim s) "")))
+                                         (string-split content "\n"))))
+       (format "Total lines: ~a\nNon-blank lines: ~a" lines non-blank))
+     "Permission Denied")]
 ```
-
-### MCP Server Integration
-
-Connect external tool servers via MCP:
-
-```racket
-(register-mcp-server! "server-name" "npx" '("@modelcontextprotocol/server-package"))
-```
-
-This dynamically adds all tools from the MCP server.
 
 ---
 
-## 8. Creating Custom Modules
+## Creating Custom Modules
 
-### Basic Module
+Beyond using the built-in modules, you can create specialized ones for your domain.
 
-```racket
-(require chrysalis-forge/llm/dspy-core)
-
-(define MySig 
-  (signature MyTask 
-    (in [query string?]) 
-    (out [answer string?])))
-
-(define my-module 
-  (ChainOfThought MySig 
-    #:instructions "Be concise and accurate."))
-```
-
-### Module with Demos (Few-Shot Learning)
+### Basic Custom Module
 
 ```racket
-(define my-module 
-  (ChainOfThought MySig 
-    #:instructions "Analyze the query carefully."
+(require "src/llm/dspy-core.rkt")
+
+;; Define the signature
+(define CodeReviewSig
+  (signature CodeReview
+    (in [code string?] [language string?])
+    (out [issues string?] [severity string?] [suggestions string?])))
+
+;; Create the module
+(define code-reviewer
+  (ChainOfThought CodeReviewSig
+    #:instructions "Review the provided code for bugs, security issues, and style problems.
+Think through each aspect systematically before providing your assessment."
     #:demos (list 
-              (hash 'query "What is 2+2?" 'answer "4")
-              (hash 'query "Capital of France?" 'answer "Paris"))))
+             (hash 'code "def foo(x): return x+1"
+                   'language "python"
+                   'issues "No input validation, no docstring"
+                   'severity "low"
+                   'suggestions "Add type hints and docstring"))))
 ```
 
-### Module with Custom Parameters
+### Using Custom Modules
 
 ```racket
-(define creative-module
-  (ChainOfThought MySig
-    #:instructions "Be creative and exploratory."
-    #:params (hash 'temperature 0.9)))
+(define ctx (ctx #:system "You are a code review expert." #:priority 'best))
+
+(define result 
+  (run-module code-reviewer ctx 
+              (hash 'code "function add(a,b) { return a + b }"
+                    'language "javascript")
+              send!))
+
+(when (RunResult-ok? result)
+  (displayln (hash-ref (RunResult-outputs result) 'issues)))
 ```
 
-### Creating Module Archives
+### Compiling Custom Modules
 
-To enable priority-based selection, compile a module into an archive:
+To create an archive with optimized variants:
 
 ```racket
-(require chrysalis-forge/llm/dspy-compile)
+(require "src/llm/dspy-compile.rkt")
 
 (define trainset
-  (list (hash 'inputs (hash 'query "test1") 'expected (hash 'answer "result1"))
-        (hash 'inputs (hash 'query "test2") 'expected (hash 'answer "result2"))))
+  (list (hash 'inputs (hash 'code "..." 'language "python")
+              'expected (hash 'issues "..." 'severity "..." 'suggestions "..."))
+        ;; more examples...
+        ))
 
-(define my-archive
-  (compile! my-module my-ctx trainset send!
-    #:k-demos 3      ; Number of demos to bootstrap
-    #:n-inst 5       ; Instruction mutations per generation
-    #:iters 3))      ; Evolution iterations
+(define reviewer-archive
+  (compile! code-reviewer ctx trainset send!
+            #:k-demos 3    ; few-shot examples
+            #:n-inst 5     ; instruction mutations per generation
+            #:iters 3))    ; evolution generations
+
+;; Now use the archive for priority-aware execution
+(define result (run-module reviewer-archive ctx inputs send!))
 ```
-
-The resulting `ModuleArchive` contains:
-- Multiple variants binned by `(cost, latency, usage)`
-- A point-cloud for geometric KNN selection
-- The best-performing variant as default
 
 ---
 
-## 9. Custom Optimization Strategies
+## Integration Patterns
 
-### Understanding the Compile Pipeline
+### Embedding in Larger Systems
 
-The `compile!` function in `src/llm/dspy-compile.rkt` implements MAP-Elites optimization:
-
-1. **Bootstrap**: Sample few-shot demos from training set
-2. **Initialize**: Create seed population via instruction mutations
-3. **Establish Baselines**: Calculate median cost/latency/usage thresholds
-4. **Evolve**: For each generation:
-   - Select random elite from archive
-   - Meta-optimize to create child variants
-   - Evaluate and update archive
-
-### Implementing a Custom Optimizer
-
-Create a new optimizer following this interface:
+To use Chrysalis Forge as a library:
 
 ```racket
-(define (my-custom-compile! m ctx trainset send! #:options [opts (hash)])
-  ;; 1. Evaluate the base module
-  (define base-results 
-    (for/list ([ex trainset])
-      (run-module m ctx (hash-ref ex 'inputs) send!)))
-  
-  ;; 2. Apply your optimization strategy
-  (define optimized-m (my-optimization-logic m base-results))
-  
-  ;; 3. Return a ModuleArchive or optimized Module
-  optimized-m)
-```
+#lang racket
 
-### Custom Mutation Strategies
+(require chrysalis-forge/llm/dspy-core
+         chrysalis-forge/llm/openai-client
+         chrysalis-forge/stores/context-store)
 
-Replace the default mutations:
+;; Create a sender function
+(define send! (make-openai-sender #:model "gpt-5.2"))
 
-```racket
-(define (my-instruction-mutations base)
-  (list base
-        (string-append "IMPORTANT: " base)
-        (string-append base "\n\nFormat your response as a numbered list.")
-        (string-append "Step by step:\n" base)))
+;; Load or create context
+(define ctx (or (ctx-get-active)
+                (ctx #:system "You are a helpful assistant.")))
+
+;; Define and run a module
+(define result (run-module my-module ctx inputs send!))
 ```
 
 ### Custom Scoring Functions
 
-Implement domain-specific evaluation:
+The default scoring balances accuracy, latency, and cost. For domain-specific needs, implement custom scoring:
 
 ```racket
-(define (my-score-result expected rr)
-  (define actual (RunResult-outputs rr))
+(define (domain-score expected rr)
+  (define outputs (RunResult-outputs rr))
   (define meta (RunResult-meta rr))
   
-  ;; Custom accuracy: partial credit for similar answers
+  ;; Domain-specific accuracy (e.g., medical diagnosis)
   (define accuracy 
-    (cond
-      [(equal? expected actual) 10.0]
-      [(similar? expected actual) 7.0]
-      [else 0.0]))
+    (if (critical-match? expected outputs) 10.0
+        (if (partial-match? expected outputs) 5.0 0.0)))
   
-  ;; Domain-specific latency requirements
-  (define elapsed (hash-ref meta 'elapsed_ms 0))
-  (define latency-penalty (if (> elapsed 2000) 3.0 0.0))
+  ;; Heavy penalty for false positives in critical domains
+  (define fp-penalty
+    (if (false-positive? expected outputs) 5.0 0.0))
   
-  (max 0.1 (- accuracy latency-penalty)))
-```
-
----
-
-## 10. Integration Examples
-
-### Using as a Library
-
-```racket
-#lang racket
-(require chrysalis-forge/llm/dspy-core
-         chrysalis-forge/llm/openai-client)
-
-;; Create a sender function
-(define send! (make-openai-sender #:model "gpt-4o"))
-
-;; Define and run a module
-(define QASig (signature QA (in [question string?]) (out [answer string?])))
-(define qa-module (ChainOfThought QASig #:instructions "Answer concisely."))
-
-(define ctx (ctx #:system "You are a helpful assistant." #:mode 'code #:priority 'fast))
-(define result (run-module qa-module ctx (hash 'question "What is Racket?") send!))
-
-(when (RunResult-ok? result)
-  (printf "Answer: ~a\n" (hash-ref (RunResult-outputs result) 'answer)))
-```
-
-### Programmatic Agent Creation
-
-```racket
-(require chrysalis-forge/core/sub-agent
-         chrysalis-forge/tools/acp-tools)
-
-;; Define a task runner
-(define (run-task prompt context tools-filter)
-  (define tools (filter-tools-by-names (make-acp-tools) tools-filter))
-  ;; Your agent loop implementation here
-  (format "Completed: ~a" prompt))
-
-;; Spawn parallel sub-agents
-(define task1 (spawn-sub-agent! "Analyze code" run-task #:profile 'researcher))
-(define task2 (spawn-sub-agent! "Fix bugs" run-task #:profile 'editor))
-
-;; Wait for results
-(define result1 (await-sub-agent! task1))
-(define result2 (await-sub-agent! task2))
-```
-
-### Custom Context with Project Rules
-
-```racket
-(require chrysalis-forge/stores/context-store
-         chrysalis-forge/llm/dspy-core)
-
-;; Create a specialized context
-(define my-ctx
-  (Ctx "You are a Racket expert."           ; system
-       "Current task: refactor module"       ; memory
-       "Prefer patch_file over write_file"   ; tool-hints
-       'code                                  ; mode
-       "accurate but concise"                 ; priority (NL string)
-       '()                                    ; history
-       ""))                                   ; compacted-summary
-
-;; Save as a named session
-(define db (load-ctx))
-(save-ctx! (hash-set db 'items 
-                     (hash-set (hash-ref db 'items) 
-                               'racket-expert my-ctx)))
-```
-
-### Geometric Priority Selection
-
-```racket
-(require chrysalis-forge/llm/dspy-selector
-         chrysalis-forge/llm/dspy-core)
-
-;; After compiling a module archive:
-(define archive (compile! base-module ctx trainset send!))
-
-;; Select variant for specific requirements
-(define fast-variant 
-  (select-elite archive (Phenotype 5.0 0.0 0.5 0.5)))  ; Low latency
-
-(define cheap-variant
-  (select-elite archive (Phenotype 5.0 0.5 0.0 0.5)))  ; Low cost
-
-;; Or use natural language priority in context
-(define nl-ctx (struct-copy Ctx ctx [priority "I need accurate results but cost must be minimal"]))
-(define result (run-module archive nl-ctx inputs send!))  ; Auto-selects via KNN
-```
-
-### Full Training Loop with Eval Logging
-
-```racket
-(require chrysalis-forge/stores/eval-store
-         chrysalis-forge/llm/dspy-compile
-         chrysalis-forge/core/sub-agent)
-
-;; Train a module
-(define archive (compile! my-module my-ctx trainset send! #:iters 5))
-
-;; Use in production with eval logging
-(define (run-with-logging task-prompt)
-  (define task-id (spawn-sub-agent! task-prompt my-runner #:profile 'editor))
-  (define result (await-sub-agent! task-id))
+  ;; Light weight on cost for critical applications
+  (define cost-factor 0.1)
+  (define cost-penalty (* cost-factor (hash-ref meta 'cost 0)))
   
-  ;; Log for learning
-  (log-eval! #:task-id task-id
-             #:success? (not (string-prefix? result "Error"))
-             #:profile 'editor
-             #:task-type "code-edit"
-             #:tools-used '("read_file" "patch_file"))
-  
-  result)
-
-;; Check what's working
-(define stats (get-profile-stats 'editor))
-(printf "Editor profile success rate: ~a%\n" 
-        (* 100 (hash-ref stats 'success_rate 0)))
-
-;; Evolve if needed
-(when (< (hash-ref stats 'success_rate 0) 0.7)
-  (gepa-evolve! "Editor tasks are failing too often. Focus on smaller, targeted edits."))
+  (max 0.0 (- accuracy fp-penalty cost-penalty)))
 ```
 
----
+### Programmatic Evolution
 
-## Appendix: Quick Reference
+Trigger evolution programmatically based on automated feedback:
 
-### Module Strategies
-| Constructor | Strategy | Use Case |
-|-------------|----------|----------|
-| `Predict` | `'predict` | Fast, simple completions |
-| `ChainOfThought` | `'cot` | Complex reasoning tasks |
+```racket
+(define (auto-evolve-from-failures failed-cases)
+  (define feedback 
+    (format "The system failed on these cases:\n~a\nPlease improve handling of these patterns."
+            (string-join (map describe-failure failed-cases) "\n")))
+  (gepa-evolve! feedback))
 
-### Context Modes
-| Mode | Description | Tool Access |
-|------|-------------|-------------|
-| `'ask` | Basic interaction | Read-only |
-| `'architect` | Analysis mode | Read files |
-| `'code` | Full capabilities | All tools |
-| `'semantic` | RDF Knowledge Graph | Specialized |
+;; In a test harness:
+(define failures (filter (λ (tc) (not (RunResult-ok? (run-test tc)))) test-cases))
+(when (> (length failures) 5)
+  (auto-evolve-from-failures failures))
+```
 
-### Sub-Agent Profiles
-| Profile | Tools Included |
-|---------|----------------|
-| `'editor` | read_file, write_file, patch_file, preview_diff, list_dir |
-| `'researcher` | read_file, list_dir, grep_code, web_search, web_fetch |
-| `'vcs` | git_*, jj_* |
-| `'all` | All available tools |
-
-### File Locations
-| Purpose | Path |
-|---------|------|
-| Context store | `~/.agentd/context.json` |
-| Eval log | `~/.agentd/evals.jsonl` |
-| Profile stats | `~/.agentd/profile_stats.json` |
-| Meta-optimizer prompt | `~/.agentd/meta_prompt.txt` |
-| Project rules | `./.agentd/rules.md` |
+This pattern enables continuous improvement: as failures accumulate, the system evolves to address them.

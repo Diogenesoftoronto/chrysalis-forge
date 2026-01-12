@@ -1,32 +1,16 @@
-# Chrysalis Forge Usage Guide
+# Using Chrysalis Forge
 
-A comprehensive guide for developers using Chrysalis Forge, an evolvable, safety-gated Racket agent framework with DSPy-style optimization and self-improving capabilities.
-
-## Table of Contents
-
-1. [Installation](#1-installation)
-2. [Quick Start](#2-quick-start)
-3. [Configuration Options](#3-configuration-options)
-4. [Project Rules](#4-project-rules)
-5. [Using Tools](#5-using-tools)
-6. [Modes and Security](#6-modes-and-security)
-7. [Priority Selection](#7-priority-selection)
-8. [Self-Evolution](#8-self-evolution)
-9. [Advanced Usage](#9-advanced-usage)
-10. [Troubleshooting](#10-troubleshooting)
+This guide walks through the practical aspects of using Chrysalis Forge—from installation through advanced features. It's written for developers who want to get things done, with enough depth to understand what's happening under the hood.
 
 ---
 
-## 1. Installation
+## Getting Started
 
-### Prerequisites
+### Installation
 
-- **Racket v9.0+** (https://racket-lang.org/)
-- Git
-- curl (for web search fallback)
-- Optional: jj (Jujutsu VCS) for advanced version control
+Chrysalis Forge requires Racket version 9.0 or later. If you don't have Racket installed, grab it from [racket-lang.org](https://racket-lang.org/). You'll also want git for cloning the repository, and curl comes in handy as a fallback for web search when the Exa API isn't available.
 
-### Clone and Install
+Clone and install with:
 
 ```bash
 git clone https://github.com/diogenesoft/chrysalis-forge.git
@@ -34,892 +18,442 @@ cd chrysalis-forge
 raco pkg install --auto
 ```
 
-This installs two CLI commands:
-- `agentd` — Full agent with all tools and modes
-- `chrysalis-client` — Lightweight client for remote services
+This registers two commands: `agentd` (the full agent) and `chrysalis-client` (a lightweight client for connecting to remote agent services). The installation process pulls in all Racket dependencies automatically.
 
-### Environment Variables
+### Configuration
 
-Create a `.env` file in the project root (see `.env.example`):
+Before running the agent, you need to configure at least one thing: your OpenAI API key. Create a `.env` file in the project root:
 
 ```bash
-# Required: OpenAI API Key
 OPENAI_API_KEY=sk-...
-
-# Optional: Custom OpenAI-compatible endpoint (LiteLLM, Ollama, etc.)
-# OPENAI_API_BASE=http://localhost:1234/v1
-
-# Optional: Exa API for neural web search
-# EXA_API_KEY=your_exa_key
-
-# Optional: Service mode (multi-user)
-# CHRYSALIS_SECRET_KEY=your-secret-key-here
-# CHRYSALIS_HOST=127.0.0.1
-# CHRYSALIS_PORT=8080
 ```
 
-### Required API Keys
+That's the minimum. For richer functionality, you can add:
 
-| Key | Purpose | Required |
-|-----|---------|----------|
-| `OPENAI_API_KEY` | LLM intelligence and optimization | **Yes** |
-| `EXA_API_KEY` | Neural web search (falls back to curl) | No |
-| `CHRYSALIS_SECRET_KEY` | JWT signing for service mode | For `--serve` |
+```bash
+# Custom LLM endpoint (for LiteLLM, Ollama, or other OpenAI-compatible APIs)
+OPENAI_API_BASE=http://localhost:1234/v1
+
+# Exa API for neural web search (falls back to DuckDuckGo via curl otherwise)
+EXA_API_KEY=your_exa_key
+
+# For running in service mode with authentication
+CHRYSALIS_SECRET_KEY=your-secret-key-here
+```
+
+The `.env.example` file in the repository documents all available options.
 
 ---
 
-## 2. Quick Start
+## Running the Agent
 
 ### Interactive Mode
 
-Start an interactive REPL session:
+The most common way to use Chrysalis Forge is interactive mode, which drops you into a REPL where you can have a conversation with the agent:
 
 ```bash
 agentd -i
 ```
 
-Or use the shorthand:
+Once inside, you can type natural language requests. The agent reads your input, reasons about it, calls tools as needed, and responds. A typical session might look like:
+
+```
+[USER]> What files are in this project?
+[AGENT uses list_dir, displays results]
+
+[USER]> Show me how the optimizer works
+[AGENT uses read_file on src/core/optimizer-gepa.rkt, explains the code]
+
+[USER]> I think it should log more information. Can you add debug output?
+[AGENT uses patch_file to add logging, shows diff, asks for confirmation]
+```
+
+The agent's tool usage is transparent. You see which tools it invokes and what results come back. This transparency is intentional—you should never wonder what the agent did on your behalf.
+
+Several commands are available within the REPL (all start with `/`):
+
+- `/mode code` switches to full-capability mode, enabling file writes and shell commands
+- `/mode architect` enables read-only file access for code analysis
+- `/priority fast` switches to speed-optimized operation
+- `/evolve "The agent should be more concise"` triggers GEPA prompt evolution
+- `/stats` shows profile performance statistics
+- `/exit` ends the session
+
+### Single-Task Mode
+
+For scripting or quick tasks, pass the prompt directly on the command line:
 
 ```bash
-chrysalis -i
-```
-
-**Basic Conversation:**
-```
-[USER]> Explain what this project does
-[AGENT]> [analyzes codebase and responds]
-
-[USER]> /help
-[Shows available commands]
-
-[USER]> /mode code
-[Switches to full capabilities mode]
-
-[USER]> /exit
-[Exits session]
-```
-
-**Using Tools in Interactive Mode:**
-
-The agent automatically uses tools based on your request:
-
-```
-[USER]> Search this codebase for all TODO comments
-[AGENT uses grep_code tool, returns results]
-
-[USER]> Create a new file at src/utils/helper.rkt with a simple utility
-[AGENT uses write_file tool after confirmation]
-```
-
-**Switching Modes:**
-```
-[USER]> /mode ask       # Read-only, no filesystem
-[USER]> /mode architect # Can read files for analysis
-[USER]> /mode code      # Full capabilities
-```
-
-### CLI Tasks
-
-Run a single task and exit:
-
-```bash
-# Basic task (read-only)
 agentd "Explain what this codebase does"
+```
 
-# Task requiring file writes (security level 2)
-agentd --perms 2 "Create a new utility function for parsing JSON"
+The agent runs, produces output, and exits. This is useful for automation or when you just need a quick answer. Combine with flags to control behavior:
 
-# Fast execution with specific model
-agentd --model gpt-5.2 --priority fast "Quick summary of README.md"
+```bash
+# Allow file modifications (security level 2)
+agentd --perms 2 "Fix the type error in parser.rkt"
 
-# Use cheap model for budget-conscious tasks
-agentd --priority cheap "Analyze this code for issues"
+# Use a specific model with speed priority
+agentd --model gpt-5.2 --priority fast "Summarize the README"
 
-# Initialize agents.md for a project
-agentd -i
-/init
+# Set a budget cap
+agentd --budget 0.50 "Deep analysis of the codebase architecture"
 ```
 
 ### Service Mode
 
-Run as a multi-user HTTP service:
+For multi-user deployments or remote access, run Chrysalis Forge as an HTTP service:
 
 ```bash
-# Start service on default port
-agentd --serve
-
-# Custom port and host
-agentd --serve --serve-port 8080 --serve-host 0.0.0.0
-
-# Run as daemon
-agentd --serve --daemonize
-
-# With custom config
-agentd --serve --config /path/to/chrysalis.toml
+agentd --serve --serve-port 8080
 ```
 
-Connect with the client:
+This exposes an OpenAI-compatible API at `/v1/chat/completions`, meaning existing tools that speak the OpenAI protocol can connect directly. The service also provides endpoints for user management (`/auth/register`, `/auth/login`) and session tracking (`/v1/sessions`).
+
+Connect with the included client:
 
 ```bash
-chrysalis-client --url http://localhost:8080
-# Or with authentication:
 chrysalis-client --url http://localhost:8080 --api-key your-jwt-token
 ```
 
-**Service API Endpoints:**
+### IDE Integration
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /auth/register` | Register new user |
-| `POST /auth/login` | Login, get JWT token |
-| `GET /users/me` | Get current user info |
-| `POST /v1/chat/completions` | OpenAI-compatible chat |
-| `GET /v1/models` | List available models |
-| `GET /v1/sessions` | List user sessions |
-
-### ACP Mode (IDE Integration)
-
-For IDE integration with Amp Code, Zed, and other ACP-compatible editors:
+For integration with editors like Amp Code or Zed, use ACP mode:
 
 ```bash
 agentd --acp
 ```
 
-This starts a JSON-RPC server on stdio for bidirectional communication with the IDE.
+This starts a JSON-RPC server on stdio, enabling bidirectional communication with the IDE. The editor can send prompts, and the agent can request file reads, display diffs, and interact with the IDE's UI.
 
 ---
 
-## 3. Configuration Options
+## Understanding Modes and Security
 
-### Command-Line Flags
+Chrysalis Forge implements a layered security model. Two orthogonal concepts control what the agent can do: **modes** and **security levels**.
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--model`, `-m` | LLM model (e.g., `gpt-5.2`, `o1-preview`, `claude-3-opus`) | `gpt-5.2` |
-| `--base-url` | Custom API endpoint (LiteLLM, Ollama, local models) | OpenAI |
-| `--priority`, `-p` | Execution profile (`best`, `cheap`, `fast`, `verbose`) | `best` |
-| `--budget` | Session budget limit in USD | Unlimited |
-| `--timeout` | Session time limit | Unlimited |
-| `--perms` | Security level (`0`, `1`, `2`, `3`, `god`) | `1` |
-| `--debug`, `-d` | Debug verbosity (`0`, `1`, `2`, `verbose`) | `0` |
-| `-i`, `--interactive` | Enter interactive REPL mode | — |
-| `--acp` | Run ACP Server for IDE integration | — |
-| `--serve` | Start HTTP service | — |
+### Modes
 
-### Using Custom LLM Endpoints
+A mode determines which category of tools the agent can access. Think of modes as role-based access control:
 
-**With LiteLLM proxy:**
-```bash
-OPENAI_API_BASE=http://localhost:4000/v1 agentd -i
-```
+**ask** is the most restricted mode. The agent can only converse and use basic utilities. No filesystem access, no network calls. This is the safe mode for experimentation.
 
-**With Ollama:**
-```bash
-agentd --base-url http://localhost:11434/v1 --model llama3.2 -i
-```
+**architect** adds read-only file access. The agent can read files, list directories, and search code, but cannot modify anything. This is appropriate for code review and analysis tasks.
 
-**With any OpenAI-compatible API:**
-```bash
-agentd --base-url https://your-proxy.com/v1 --model your-model "Your task"
-```
+**code** unlocks full capabilities: file writes, shell commands, network access, everything. This is the power mode for actual development work.
 
----
+**semantic** enables RDF knowledge graph operations for semantic memory and reasoning.
 
-## 4. Project Rules
-
-### `.agentd/rules.md`
-
-Create `.agentd/rules.md` in your project root to add project-specific instructions that are automatically appended to the agent's system prompt.
-
-**Example `.agentd/rules.md`:**
-
-```markdown
-# Project Rules for MyApp
-
-## Code Style
-- Use TypeScript strict mode
-- Prefer functional components in React
-- Use camelCase for variables, PascalCase for types
-
-## Testing
-- All new features need unit tests
-- Use Jest with React Testing Library
-- Test files go in __tests__ directories
-
-## Git Conventions
-- Use conventional commits (feat:, fix:, docs:)
-- Keep commits small and atomic
-- Always rebase before merging
-
-## Architecture
-- API routes in /api directory
-- Shared types in /types
-- Business logic in /lib
-```
-
-### How Rules Are Applied
-
-When the agent starts, it checks for `.agentd/rules.md` in the current working directory. If found, the content is wrapped in `<project_rules>` tags and appended to the system prompt:
-
-```
-[Normal system prompt]
-
-<project_rules>
-[Your rules.md content]
-</project_rules>
-```
-
-This ensures project-specific conventions are followed without manual reminders.
-
----
-
-## 5. Using Tools
-
-Chrysalis Forge provides 25+ built-in tools organized by category.
-
-### File Tools
-
-**`read_file`** — Read file contents
-```
-Read the contents of src/main.rkt
-```
-
-**`write_file`** — Create or overwrite files (requires security level 2+)
-```
-Create a new file at lib/utils.rkt with a helper function
-```
-
-**`patch_file`** — Surgical line-range edits
-```
-Replace lines 15-20 in config.json with the new settings
-```
-
-**`preview_diff`** — Preview changes before applying
-```
-Show me what changes would be made to package.json
-```
-
-**`list_dir`** — Directory listing
-```
-List all files in the src directory recursively
-```
-
-**`grep_code`** — Regex search across files
-```
-Search for all uses of "define-syntax" in .rkt files
-```
-
-### Git Tools
-
-**`git_status`** — Repository status (porcelain format)
-```
-What's the current git status?
-```
-
-**`git_diff`** — Show changes
-```
-Show me the diff for the last commit
-```
-
-**`git_log`** — Commit history
-```
-Show the last 10 commits
-```
-
-**`git_commit`** — Stage and commit (requires level 2+)
-```
-Commit all changes with message "feat: add new parser"
-```
-
-**`git_checkout`** — Branch operations
-```
-Create and switch to a new branch called feature/auth
-```
-
-### Jujutsu (jj) Tools — Next-Gen VCS
-
-Jujutsu is a Git-compatible VCS with powerful undo capabilities. Every operation is tracked and reversible.
-
-**Why jj?**
-- **Instant undo**: Any operation can be reversed with `jj_undo`
-- **Operation history**: Full audit trail of all VCS operations
-- **Time travel**: Restore to any past state with `jj_op_restore`
-- **Parallel workspaces**: Work on multiple tasks without stashing
-
-**`jj_status`** — Current working copy state
-```
-What's the jj status?
-```
-
-**`jj_log`** — Commit graph visualization
-```
-Show the jj commit log
-```
-
-**`jj_diff`** — Show changes
-```
-What changes are in the current jj revision?
-```
-
-**`jj_undo`** — Instant rollback (the undo itself can be undone!)
-```
-Undo the last jj operation
-```
-
-**`jj_op_log`** — Operation history
-```
-Show the jj operation history
-```
-
-**`jj_op_restore`** — Time travel to any state
-```
-Restore to operation abc123 from the op log
-```
-
-**`jj_workspace_add`** — Create parallel worktree
-```
-Create a new workspace at ../feature-branch for the feature revision
-```
-
-**`jj_describe`** — Set commit message
-```
-Set the description for current change to "fix: resolve null pointer"
-```
-
-**`jj_new`** — Create new change
-```
-Create a new change with message "wip: experimenting with parser"
-```
-
-### Web Search Tools
-
-**Requires**: `EXA_API_KEY` for full features. Falls back to curl/DuckDuckGo without it.
-
-**`web_search`** — Exa AI semantic search
-```
-Search the web for "Racket macro best practices"
-```
-
-Options:
-- `type`: `"auto"` (default), `"neural"`, `"keyword"`, `"fast"`, `"deep"`
-- `num_results`: Number of results (default 5)
-- `include_text`: Include page text in results
-
-**`web_fetch`** — Fetch URL content via curl
-```
-Fetch the content from https://docs.racket-lang.org/
-```
-
-**`web_search_news`** — Search recent news with date filtering
-```
-Search for news about "AI agents" from the last 7 days
-```
-
-### Evolution Tools
-
-**`evolve_system`** — Trigger GEPA optimization (level 2+)
-```
-Evolve the system prompt to be more concise
-```
-
-**`log_feedback`** — Record task results for learning
-```
-Log that task-123 succeeded for file-edit category
-```
-
-**`suggest_profile`** — Get optimal profile for task type
-```
-Which profile works best for file editing tasks?
-```
-
-**`profile_stats`** — View learning data
-```
-Show performance statistics for all profiles
-```
-
-### Sub-Agent Tools
-
-Spawn parallel tasks with specialized tool profiles.
-
-**`spawn_task`** — Launch parallel sub-agent
-```
-Spawn a researcher sub-agent to find documentation on Racket contracts
-```
-
-Profiles:
-- `editor`: File creation/modification (`read_file`, `write_file`, `patch_file`, `preview_diff`, `list_dir`)
-- `researcher`: Read-only search (`read_file`, `list_dir`, `grep_code`, `web_search`, `web_fetch`)
-- `vcs`: Version control (`git_*`, `jj_*` tools)
-- `all`: Full toolkit
-
-**`await_task`** — Wait for completion
-```
-Wait for task-1 to complete and show results
-```
-
-**`task_status`** — Check progress without blocking
-```
-What's the status of task-1?
-```
-
-### Test Generation
-
-**`generate_tests`** — LLM-powered test creation
-```
-Generate tests for src/parser.rkt using RackUnit
-```
-
-The tool:
-1. Reads the source file
-2. Infers appropriate test framework from file extension
-3. Generates comprehensive tests covering edge cases
-4. Optionally writes to specified output path
-
----
-
-## 6. Modes and Security
-
-### Operational Modes
-
-| Mode | Description | Available Tools |
-|------|-------------|-----------------|
-| `ask` | Basic interaction | `ask_human`, `ctx_evolve`, `run_racket`, workflows |
-| `architect` | Read files for analysis | Above + `read_file` |
-| `code` | Full capabilities | All tools including write, network, services |
-| `semantic` | RDF knowledge graph | Base + RDF tools + memory |
-
-Switch modes in interactive session:
-```
-/mode code
-```
+Switch modes with the `/mode` command or by starting the agent with a specific mode configured.
 
 ### Security Levels
 
-| Level | Name | Capabilities |
-|-------|------|--------------|
-| `0` | Read-only | No execution, workspace sandbox only |
-| `1` | Sandbox | Safe Racket subset, read filesystem, no network write |
-| `2` | Limited I/O | File write (with confirmation), limited network |
-| `3` | Full | Full Racket, shell commands (with confirmation) |
-| `god` | Unrestricted | Auto-approve all operations (dangerous!) |
+Security levels add another dimension of control, governing *how* dangerous operations are handled:
 
-**Setting Security Level:**
+**Level 0** is pure sandbox—no execution of anything that could affect the system.
+
+**Level 1** allows safe operations: reading files, running sandboxed Racket expressions, basic network reads.
+
+**Level 2** permits file writes, but requires confirmation. Every write operation prompts you before executing.
+
+**Level 3** enables shell access, again with confirmation for each command.
+
+**god** mode (yes, that's what it's called) auto-approves everything. Use this only in controlled environments where you trust the agent completely.
+
+Set the security level with `--perms`:
+
 ```bash
-# Read-only mode
-agentd --perms 0 "Analyze this code"
-
-# Allow file writes (prompts for confirmation)
-agentd --perms 2 "Fix the bug in parser.rkt"
-
-# Full access with approval prompts
-agentd --perms 3 "Run the test suite"
-
-# Unrestricted (use with caution!)
-agentd --perms god "Automate this entire workflow"
+agentd --perms 2 "Refactor the parser module"
 ```
 
-### LLM Security Judge
-
-Enable an LLM-based security reviewer for sensitive operations:
+For additional safety, you can enable an LLM-based security judge that reviews operations before execution:
 
 ```bash
 export LLM_JUDGE=true
-export LLM_JUDGE_MODEL=gpt-5.2
+agentd --perms 3 "Run the test suite"
 ```
 
-When enabled, the judge reviews:
-- File writes
-- Shell commands
-- Network operations
-- Any potentially dangerous actions
-
-The judge responds with `[SAFE]` or `[UNSAFE]` after analyzing the operation.
+The judge receives the proposed operation and responds with [SAFE] or [UNSAFE]. It's not foolproof, but it catches obvious problems.
 
 ---
 
-## 7. Priority Selection
+## The Tool System
+
+Chrysalis Forge provides 25 built-in tools organized into categories. Understanding these tools helps you understand what the agent can do.
+
+### File Operations
+
+The core file tools are `read_file`, `write_file`, `patch_file`, `list_dir`, and `grep_code`. The agent uses these automatically when you ask it to examine or modify code.
+
+What's notable is `patch_file`—rather than rewriting entire files, the agent can make surgical edits to specific line ranges. This produces cleaner diffs and reduces the risk of unintended changes. When the agent decides to patch, it shows you the diff before applying:
+
+```
+[AGENT proposes patch to src/parser.rkt, lines 45-52]
+--- a/src/parser.rkt
++++ b/src/parser.rkt
+@@ -45,8 +45,10 @@
+   (define tokens (tokenize input))
++  (log-debug "Tokenized: ~a tokens" (length tokens))
+   (parse-tokens tokens))
+
+Apply this change? [y/N]
+```
+
+### Version Control
+
+Two version control systems are supported: git and Jujutsu (jj).
+
+The git tools (`git_status`, `git_diff`, `git_log`, `git_commit`, `git_checkout`) provide standard repository operations. Nothing surprising here.
+
+The Jujutsu tools are more interesting. Jujutsu is a next-generation VCS that treats history as mutable. The killer feature is `jj_undo`—instant rollback of any operation, including commits. If the agent makes a mistake, `jj_undo` reverts it immediately. The operation log (`jj_op_log`) shows what happened, and `jj_op_restore` can restore any previous state.
+
+For agents making changes to code, this safety net is invaluable. Mistakes become cheap because they're trivially reversible.
+
+### Web Search
+
+When the agent needs external information, it uses `web_search`, `web_fetch`, or `web_search_news`. If you've configured the Exa API key, searches use neural search for semantic matching. Otherwise, they fall back to DuckDuckGo via curl.
+
+The agent decides when to search. If you ask about a library it doesn't know about, or request recent news, it will search automatically.
+
+### Sub-Agents
+
+Perhaps the most powerful tools are the sub-agent tools: `spawn_task`, `await_task`, and `task_status`.
+
+Sub-agents are parallel workers that handle subtasks independently. Each sub-agent runs in its own thread with a focused tool profile. When you ask the agent to do something complex—like researching multiple files, making coordinated changes, or gathering information from several sources—it can spawn sub-agents to work in parallel.
+
+Profiles restrict what each sub-agent can do:
+
+- **editor** sub-agents can read and write files but can't search the web
+- **researcher** sub-agents can read and search but can't modify anything  
+- **vcs** sub-agents handle version control operations
+- **all** gives full access (used sparingly)
+
+This profile system serves two purposes: it focuses each sub-agent on its task (reducing confusion and errors), and it provides a security boundary (a researcher can't accidentally overwrite files).
+
+### Self-Evolution
+
+The evolution tools (`evolve_system`, `log_feedback`, `suggest_profile`, `profile_stats`) let you interact with the learning system.
+
+`evolve_system` triggers GEPA optimization. You provide feedback ("The agent should be more concise" or "It keeps missing edge cases in tests"), and the system evolves the prompt to address that feedback.
+
+`log_feedback` records task outcomes for learning. When a task succeeds or fails, logging it helps the system learn which approaches work.
+
+`suggest_profile` queries the accumulated learning data to recommend which sub-agent profile suits a given task type.
+
+`profile_stats` shows raw performance data—success rates, average durations, costs per profile.
+
+---
+
+## Priority Selection
+
+One of the distinctive features of Chrysalis Forge is priority-aware execution. Rather than always using the "best" model configuration, you can specify what you're optimizing for.
 
 ### Keywords
 
-Use built-in keywords for quick priority setting:
-
-| Keyword | Optimizes For |
-|---------|---------------|
-| `fast` | Low latency |
-| `cheap` | Low cost |
-| `best` / `accurate` | High accuracy (default) |
-| `verbose` | Detailed explanations |
-| `concise` / `compact` | Minimal token usage |
+The simplest approach uses keywords:
 
 ```bash
-agentd --priority fast "Quick code review"
-agentd --priority cheap "Analyze this large file"
-agentd --priority best "Critical production fix"
+agentd --priority fast "Quick status check"
+agentd --priority cheap "Batch analysis"
+agentd --priority accurate "Critical code review"
 ```
 
-### Natural Language Priority
+Each keyword maps to a target in phenotype space. "Fast" prioritizes low latency, accepting potentially lower accuracy. "Cheap" minimizes token cost. "Accurate" (or "best") prioritizes correctness regardless of time or cost.
 
-Describe what you need in plain English:
+### Natural Language
+
+For more nuanced preferences, use natural language:
 
 ```bash
-# Budget-conscious but accurate
-agentd --priority "I'm broke but need precision" "Review this PR"
-
-# Time-sensitive
-agentd --priority "I'm in a hurry" "Quick summary"
-
-# Balanced approach
-agentd --priority "balance speed and accuracy" "Refactor this module"
+agentd --priority "I need accuracy but I'm on a budget" "Review this security code"
+agentd --priority "Balance speed and quality" "Generate tests"
 ```
 
-The system uses **K-Nearest Neighbor search** in a geometric phenotype space to find the elite agent that best matches your stated priorities.
+The system interprets this description and finds the module variant in its archive that best matches your stated preferences. Under the hood, it uses KNN search in a normalized phenotype space.
 
 ### Autonomous Priority Switching
 
-The agent can change its own priority mid-task using the `set_priority` tool:
-
-```
-[AGENT thinking]: This task requires careful analysis, switching to 'best' priority...
-[Uses set_priority tool]
-```
-
-This enables adaptive behavior where the agent uses fast/cheap settings for simple subtasks and switches to accurate mode for critical decisions.
+The agent can change its own priority mid-task using the `set_priority` tool. If it encounters a subtask that's taking too long, it might switch to "fast" mode. If it hits something critical, it might upgrade to "best". This autonomous adaptation makes the agent more effective across varied workloads.
 
 ---
 
-## 8. Self-Evolution
+## Project-Specific Configuration
 
-Chrysalis Forge continuously learns and improves through multiple mechanisms.
+### Rules Files
+
+Every project is different. Chrysalis Forge supports project-specific configuration through `.agentd/rules.md` files. Place this file in your project root, and its contents are automatically appended to the agent's system prompt.
+
+A typical rules file might contain:
+
+```markdown
+# Project Rules
+
+## Code Style
+We use TypeScript with strict mode. Prefer functional components in React.
+All exports should be typed explicitly.
+
+## Testing
+Use Jest with React Testing Library. Test files live in __tests__ directories
+adjacent to the code they test. Mock external services.
+
+## Git Conventions
+Use conventional commits: feat:, fix:, docs:, refactor:, test:, chore:
+Keep commits atomic. Squash before merging.
+
+## Project Structure
+- src/components/ — React components
+- src/hooks/ — Custom hooks
+- src/services/ — API and external service clients
+- src/utils/ — Pure utility functions
+```
+
+The agent incorporates these rules into its behavior. When you ask it to create a component, it follows your style guide. When it commits, it uses your commit message format.
+
+### Agents.md Files
+
+The repository also recognizes `agents.md` (or `AGENTS.md`) files placed in directories. These provide localized guidance for specific parts of the codebase. For example, `src/llm/agents.md` might contain instructions specific to the LLM layer.
+
+---
+
+## Self-Evolution in Practice
+
+Chrysalis Forge isn't static—it learns from use. Understanding how to leverage this makes the agent more valuable over time.
 
 ### Triggering Evolution
 
-**Interactive Command:**
+When you notice the agent consistently making certain mistakes or missing certain patterns, provide feedback:
+
 ```
-/evolve The agent should be more concise and avoid unnecessary explanations
+/evolve "The agent generates code that's too verbose. It should prefer concise, idiomatic expressions."
 ```
 
-**Using the Tool:**
-```
-Use evolve_system with feedback "Focus more on code quality over speed"
-```
+This triggers GEPA optimization. The system examines its current prompt alongside your feedback, reflects on what's going wrong, and generates an improved prompt. The evolved prompt is stored and used for future interactions.
 
-**Programmatic:**
-```racket
-(gepa-evolve! "Make responses more actionable")
+You can also evolve through the tool:
+
+```
+Use evolve_system to make the agent better at generating TypeScript types
 ```
 
 ### Viewing Learning Data
 
-**Interactive Statistics:**
+The `/stats` command shows profile performance:
+
 ```
 /stats
 ```
 
-**Profile Performance:**
+Output might show:
+
 ```
-Show profile_stats for the editor profile
-```
-
-**Eval Store Location:**
-```
-~/.agentd/evals.jsonl      # Individual task logs
-~/.agentd/profile_stats.json # Aggregate statistics
-```
-
-### Profile Optimization
-
-The system learns which tool profiles work best for different task types:
-
-1. **Task Execution**: Sub-agent completes task with a specific profile
-2. **Result Logging**: `log_feedback` records success/failure
-3. **Stats Update**: Aggregate statistics are updated
-4. **Profile Suggestion**: `suggest_profile` recommends optimal profile for similar tasks
-5. **Evolution**: `evolve_profile!` analyzes and recommends improvements
-
-**Example Flow:**
-```
-[USER]> Spawn an editor task to fix the bug in parser.rkt
-[AGENT uses spawn_task with profile 'editor']
-[Task completes successfully]
-[AGENT uses log_feedback to record success]
-
-... later ...
-
-[USER]> What profile works best for file editing?
-[AGENT uses suggest_profile]
-Suggested profile: editor (success rate: 87%)
+Profile: editor
+  Success rate: 87%
+  Average duration: 4.2s
+  Average cost: $0.003
+  
+Profile: researcher  
+  Success rate: 94%
+  Average duration: 6.8s
+  Average cost: $0.005
 ```
 
-### GEPA Architecture
+This data reveals which configurations work well and which need improvement.
 
-**GEPA (General Evolvable Prompting Architecture)** evolves system prompts:
+### The Learning Loop
 
-1. Current system prompt + feedback → Optimizer LLM
-2. Optimizer generates improved prompt
-3. New prompt saved as `evo_<timestamp>` context
-4. Agent uses evolved prompt in future sessions
+Every task execution contributes to learning:
 
-**Meta-GEPA** evolves the optimizer itself:
-```
-/meta_evolve The optimizer should prioritize code safety
-```
+1. Task is assigned to a profile
+2. Execution proceeds, results logged to eval store
+3. Profile statistics are updated
+4. Future profile suggestions incorporate this data
+5. Periodic evolution incorporates accumulated feedback
+
+Over time, the agent adapts to your specific use patterns.
 
 ---
 
-## 9. Advanced Usage
+## Advanced Usage
 
 ### Parallel Sub-Agents
 
-Spawn multiple tasks that run concurrently:
+For complex tasks, explicitly request parallel execution:
 
 ```
-Spawn three parallel tasks:
-1. A researcher to find documentation on Racket contracts
-2. An editor to create a new module skeleton
-3. A VCS agent to check recent changes to related files
+Spawn three sub-agents:
+1. A researcher to analyze src/parser.rkt
+2. A researcher to analyze src/lexer.rkt  
+3. An editor to prepare a refactoring plan
+
+Wait for all to complete, then synthesize their findings.
 ```
 
-The agent will:
-```racket
-(spawn-sub-agent! "Find docs on contracts" run-fn #:profile 'researcher)
-(spawn-sub-agent! "Create module skeleton" run-fn #:profile 'editor)
-(spawn-sub-agent! "Check VCS history" run-fn #:profile 'vcs)
-```
+The agent spawns the sub-agents, monitors their progress, and collects results. This can dramatically speed up tasks that decompose naturally into independent parts.
 
-Check status without blocking:
-```
-What's the status of all spawned tasks?
-```
+### Custom LLM Endpoints
 
-Wait for all to complete:
+Chrysalis Forge works with any OpenAI-compatible API. For local models:
+
+```bash
+# With Ollama
+agentd --base-url http://localhost:11434/v1 --model llama3.2 -i
+
+# With LiteLLM
+OPENAI_API_BASE=http://localhost:4000/v1 agentd -i
+
+# With vLLM
+agentd --base-url http://localhost:8000/v1 --model mistral-7b-instruct -i
 ```
-Await all tasks and summarize results
-```
-
-### Custom Prompts
-
-Edit `src/strings/strings.rkt` to customize:
-
-- **System prompts** for each mode (`SYSTEM-PROMPT-AGENT`, `SYSTEM-PROMPT-ARCHITECT`, `SYSTEM-PROMPT-ASK`)
-- **Security messages** (`MSG-SECURITY-ALERT`, `MSG-SECURITY-DENIED`)
-- **LLM Judge prompt** (`PROMPT-LLM-JUDGE`)
-- **Help text** (`HELP-TEXT-INTERACTIVE`, `HELP-TEXT-CLIENT`)
-- **Error messages** (`ERR-NO-API-KEY`, `ERR-CONNECTION-FAILED`)
 
 ### Budget and Timeout Control
 
-**Set Session Limits:**
+For production use, set limits:
+
 ```bash
-# $5 budget limit
-agentd --budget 5.00 "Complete this refactoring task"
+# Stop after spending $2
+agentd --budget 2.00 "Deep codebase analysis"
 
-# 30 minute timeout
-agentd --timeout 1800 "Analyze and fix all linting issues"
-
-# Combined
-agentd --budget 2.00 --timeout 600 "Quick task with limits"
+# Stop after 10 minutes
+agentd --timeout 10m "Comprehensive test generation"
 ```
 
-**Monitoring Costs:**
-
-In interactive mode:
-```
-/cost
-```
-
-At session end, a summary is displayed:
-```
-───────────────────────────── Session Summary ─────────────────────────────
-Duration        5m 23s
-Turns           12
-
-Model Usage:
-  gpt-5.2          8 calls   15,234 in · 3,456 out   $0.0234
-
-Tokens          15,234 input   3,456 output   18,690 total
-Cost            $0.0234
-
-Tools Used:
-  read_file            12 calls   (45 lifetime)
-  write_file           3 calls    (12 lifetime)
-  grep_code            5 calls    (28 lifetime)
-──────────────────────────────────────────────────────────────────────────
-```
-
-### MCP Server Integration
-
-Connect external MCP (Model Context Protocol) servers to add new tools dynamically:
-
-```
-Add an MCP server named "filesystem" using npx with args ["@anthropic/mcp-filesystem"]
-```
-
-This uses the `add_mcp_server` tool to:
-1. Start the MCP subprocess
-2. Register all tools from the server
-3. Make them available to the agent
-
-### Session Management
-
-**List Sessions:**
-```
-/session list
-```
-
-**Create New Session:**
-```
-/session new my-project
-```
-
-**Switch Session:**
-```
-/session switch my-project
-```
-
-**Delete Session:**
-```
-/session delete old-session
-```
-
-Sessions persist to `~/.agentd/context.json` and include:
-- System prompt (possibly evolved)
-- Mode and priority settings
-- Conversation history
-- Compacted summary for long conversations
+The agent respects these limits, wrapping up gracefully when approaching them.
 
 ---
 
-## 10. Troubleshooting
+## Troubleshooting
 
-### Common Errors
+### Common Issues
 
-**"No API key configured"**
-```
-Error: [ERROR] No API key configured. Set OPENAI_API_KEY in your environment.
-```
-Solution: Set the `OPENAI_API_KEY` environment variable or add it to `.env`.
+**"API key not found"** — Ensure `OPENAI_API_KEY` is set in your environment or `.env` file.
 
-**"Permission Denied: Requires Level X"**
-```
-Permission Denied: Requires security level 2.
-```
-Solution: Increase security level with `--perms 2` or higher.
+**"Permission denied"** — You're trying an operation that requires a higher security level. Use `--perms 2` or `--perms 3`.
 
-**"jj executable not found"**
-```
-jj (Jujutsu) executable not found. Install from https://martinvonz.github.io/jj/
-```
-Solution: Install Jujutsu VCS or use Git tools instead.
+**"Tool not available in this mode"** — Switch to a mode that includes the tool. Use `/mode code` for full access.
 
-**"Resource Limit Exceeded"**
-```
-Resource Limit Exceeded: Execution stopped.
-```
-Solution: Increase `--budget` or `--timeout`, or reduce task scope.
+**Slow responses** — Try `--priority fast` or a faster model. Check if network issues are causing API delays.
 
-### Debug Levels
+### Debug Output
 
-| Level | Output |
-|-------|--------|
-| `0` | Silent (errors only) |
-| `1` | Info (tool calls, costs) |
-| `2` / `verbose` | Verbose (full traces) |
+Increase debug verbosity to see what's happening:
 
-**Enable Debug Mode:**
 ```bash
-agentd --debug 1 "Your task"
-agentd --debug verbose "Detailed tracing"
+agentd --debug 2 "Your task"
 ```
 
-Debug output includes:
-- Tool invocations and arguments
-- API call costs and token counts
-- Sandbox execution details
-- Optimizer steps
+Debug levels:
+- 0: Minimal output (default)
+- 1: Show tool calls and major events
+- 2: Detailed logging including API calls
+- verbose: Everything, including raw payloads
 
 ### Log Locations
 
-| File | Purpose |
-|------|---------|
-| `~/.agentd/context.json` | Session contexts and history |
-| `~/.agentd/evals.jsonl` | Task evaluation logs |
-| `~/.agentd/profile_stats.json` | Aggregate profile statistics |
-| `~/.agentd/traces.jsonl` | Execution traces |
-| `~/.agentd/meta_prompt.txt` | Evolved optimizer prompt |
-| `~/.agentd/workspace/` | Sandboxed file workspace |
+Persistent logs live in `~/.agentd/`:
 
-### Getting Help
+- `traces.jsonl` — Full operation traces
+- `evals.jsonl` — Task outcome evaluations  
+- `context.json` — Stored contexts and sessions
+- `meta_prompt.txt` — The current meta-optimizer prompt
 
-**Interactive Help:**
-```
-/help
-```
-
-**Documentation:**
-- README.md — Overview and quick start
-- scribblings/chrysalis-forge.scrbl — Scribble documentation
-- doc/USAGE.md — This guide
-
-**Community:**
-- GitHub Issues: Report bugs and request features
-- Pull Requests: Contribute improvements
-
----
-
-## Quick Reference
-
-### Essential Commands
-
-```bash
-# Start interactive session
-agentd -i
-
-# Run single task
-agentd "Your task"
-
-# With permissions and priority
-agentd --perms 2 --priority fast "Task"
-
-# Start service
-agentd --serve --serve-port 8080
-
-# Connect client
-chrysalis-client --url http://localhost:8080
-
-# ACP for IDE
-agentd --acp
-```
-
-### Interactive Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help |
-| `/mode <mode>` | Switch mode |
-| `/model <name>` | Switch model |
-| `/session <cmd>` | Session management |
-| `/config` | View/set configuration |
-| `/cost` | Show session cost |
-| `/stats` | Show profile statistics |
-| `/evolve <feedback>` | Trigger evolution |
-| `/init` | Initialize agents.md |
-| `/exit` | Exit session |
-
-### Security Quick Reference
-
-| Need | Command |
-|------|---------|
-| Read-only analysis | `--perms 0` or `--perms 1` |
-| Create/modify files | `--perms 2` |
-| Run shell commands | `--perms 3` |
-| Fully automated | `--perms god` |
-
-### Priority Quick Reference
-
-| Need | Flag |
-|------|------|
-| Speed | `--priority fast` |
-| Low cost | `--priority cheap` |
-| Accuracy | `--priority best` |
-| Detailed output | `--priority verbose` |
-| Natural language | `--priority "your description"` |
+Examining these files can reveal what the agent has been doing and how its behavior has evolved.
