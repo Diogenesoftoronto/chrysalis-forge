@@ -612,3 +612,243 @@ Trigger evolution programmatically based on automated feedback:
 ```
 
 This pattern enables continuous improvement: as failures accumulate, the system evolves to address them.
+
+---
+
+## Web Search Tools
+
+The `src/tools/web-search.rkt` module provides web search and content fetching capabilities.
+
+### Tool Definitions
+
+```racket
+(define (make-web-search-tools) → list?)
+```
+
+Returns a list of tool definitions for web search functionality.
+
+### Dispatcher
+
+```racket
+(define (execute-web-search tool-name args) → string?)
+```
+
+Dispatches to the appropriate web search tool based on `tool-name`.
+
+### Available Tools
+
+**`web_search`** — Semantic web search using Exa AI. Falls back to DuckDuckGo via curl when no API key is configured.
+
+**`web_fetch`** — Fetch and extract content from a URL.
+
+**`web_search_news`** — Date-filtered news search for recent events.
+
+### Environment
+
+Set `EXA_API_KEY` for Exa AI semantic search. When the key is not set, searches fall back to DuckDuckGo via curl, which provides basic keyword matching but lacks semantic understanding.
+
+---
+
+## MCP Client
+
+The `src/tools/mcp-client.rkt` module implements a Model Context Protocol client for connecting to external tool servers.
+
+### Struct
+
+```racket
+(struct mcp-client (name process stdin stdout stderr tools) #:transparent)
+```
+
+Represents a connection to an MCP server, including the subprocess handles and discovered tools.
+
+### API
+
+**Connect to an MCP server:**
+
+```racket
+(define (mcp-connect name command args) → mcp-client?)
+```
+
+Spawns the MCP server process and performs the initialization handshake. Returns a client struct with available tools populated.
+
+**Disconnect:**
+
+```racket
+(define (mcp-disconnect client) → void?)
+```
+
+Terminates the MCP server process and cleans up resources.
+
+**List available tools:**
+
+```racket
+(define (mcp-list-tools client) → list?)
+```
+
+Returns the list of tools available from the connected server.
+
+**Call a tool:**
+
+```racket
+(define (mcp-call-tool client tool-name args) → any/c)
+```
+
+Invokes a tool on the MCP server with the given arguments. Returns the tool's result.
+
+**Session statistics:**
+
+```racket
+(define (mcp-get-session-stats) → hash?)
+```
+
+Returns connection and call statistics for the current session.
+
+```racket
+(define (mcp-reset-session-stats!) → void?)
+```
+
+Resets session statistics counters.
+
+---
+
+## Model Registry
+
+The `src/llm/model-registry.rkt` module provides dynamic model discovery and capability tracking.
+
+### Structs
+
+```racket
+(struct ModelCapabilities 
+  (id provider max-context reasoning coding speed cost-tier 
+   supports-tools? supports-vision? best-for description) 
+  #:transparent)
+```
+
+Static capabilities of a model: context window, strengths, tool/vision support.
+
+```racket
+(struct ModelStats 
+  (total-calls success-calls total-ms total-cost-usd 
+   by-task-type by-profile last-used) 
+  #:transparent)
+```
+
+Runtime performance statistics tracked per model.
+
+```racket
+(struct ModelRecord (caps stats available? disabled?) #:transparent)
+```
+
+Combines capabilities with stats and availability flags.
+
+### API
+
+**Initialize the registry:**
+
+```racket
+(define (init-model-registry! #:api-key key #:api-base base) → void?)
+```
+
+Initializes the registry by fetching available models from the configured endpoint.
+
+**Fetch models from endpoint:**
+
+```racket
+(define (fetch-models-from-endpoint base-url api-key) → list?)
+```
+
+Queries an OpenAI-compatible `/models` endpoint and returns model information.
+
+**Register a model:**
+
+```racket
+(define (register-model! caps) → void?)
+```
+
+Manually registers a model with known capabilities.
+
+**List available models:**
+
+```racket
+(define (list-available-models) → list?)
+```
+
+Returns all models currently marked as available.
+
+**Get a specific model:**
+
+```racket
+(define (get-model id) → (or/c ModelRecord? #f))
+```
+
+Returns the model record for the given ID, or `#f` if not found.
+
+**Update performance stats:**
+
+```racket
+(define (update-model-stats! id 
+                             #:success? success? 
+                             #:elapsed-ms ms 
+                             #:cost-usd cost 
+                             #:task-type task-type 
+                             #:profile profile) → void?)
+```
+
+Records execution statistics for a model call.
+
+### Provider Detection
+
+The registry automatically detects providers (OpenAI, Anthropic, OpenRouter, Groq, Together, Backboard) from base URLs and model ID prefixes. Capability inference examines model IDs to assign reasonable defaults for context limits, tool support, and cost tiers.
+
+---
+
+## Workflow Engine
+
+The `src/core/workflow-engine.rkt` module provides stored workflow templates for common tasks.
+
+### API
+
+**List workflows:**
+
+```racket
+(define (workflow-list) → list?)
+```
+
+Returns all stored workflow slugs and descriptions.
+
+**Get a workflow:**
+
+```racket
+(define (workflow-get slug) → (or/c string? #f))
+```
+
+Returns the workflow content for the given slug, or `#f` if not found.
+
+**Create or update a workflow:**
+
+```racket
+(define (workflow-set slug description content) → void?)
+```
+
+Stores a workflow template with the given slug, description, and content. Overwrites if the slug already exists.
+
+**Delete a workflow:**
+
+```racket
+(define (workflow-delete slug) → void?)
+```
+
+Removes the workflow with the given slug.
+
+### Default Workflows
+
+The engine includes built-in workflows:
+
+- **commit-msg** — Generate commit messages from staged changes
+- **pr-desc** — Generate pull request descriptions
+- **review** — Code review workflow
+- **naming** — Suggest names for functions, variables, types
+
+### Storage
+
+Workflows are persisted in `~/.agentd/graph.db` in the `workflows` table.

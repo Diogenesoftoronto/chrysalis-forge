@@ -1,5 +1,6 @@
 #lang racket/base
-(provide calculate-cost update-pricing! fetch-usage-stats)
+(provide calculate-cost update-pricing! fetch-usage-stats 
+         reset-pricing! clear-pricing! pricing-count)
 (require racket/string racket/list net/url json racket/port)
 
 ;; Prices in USD per 1M tokens (Input . Output)
@@ -14,51 +15,91 @@
 (define current-pricing (make-hash (hash->list DEFAULT-PRICING)))
 (define pricing-updated? (box #f))
 
-(define (fetch-models url-str)
+(define (reset-pricing!)
+  (set! current-pricing (make-hash (hash->list DEFAULT-PRICING)))
+  (set-box! pricing-updated? #t))
+
+(define (clear-pricing!)
+  (set! current-pricing (make-hash))
+  (set-box! pricing-updated? #f))
+
+(define (pricing-count) (hash-count current-pricing))
+
+(define (fetch-json url-str)
   (with-handlers ([exn:fail? (λ (e) 
                                (log-warning "Pricing fetch failed for ~a: ~a" url-str (exn-message e))
                                #f)])
     (define url (string->url url-str))
-    ;; Use GET request with headers if needed (simple GET for now)
-    ;; Note: Some providers might fail without an API Key.
-    ;; We rely on standard env var OPENAI_API_KEY if we needed authentication, 
-    ;; but simple call/input-url doesn't send auth headers by default. 
-    ;; For public endpoints like OpenRouter it's fine. 
-    ;; For private proxies, this might fail without auth headers. 
-    ;; Given the constraints, we attempt a simple fetch first.
-    (define resp (call/input-url url get-pure-port read-json))
-    (hash-ref resp 'data '())))
+    (call/input-url url get-pure-port read-json)))
+
+;; Fetch pricing from Portkey's free API (no API key required)
+;; Returns cents per token - we convert to dollars per 1M tokens
+(define (fetch-portkey-pricing! provider)
+  (define url (format "https://api.portkey.ai/model-configs/pricing/~a" provider))
+  (define resp (fetch-json url))
+  (cond
+    [(not resp) #f]
+    [(hash? resp)
+     (define found-any? #f)
+     (for ([(model-id config) (in-hash resp)])
+       (when (and (hash? config) (not (equal? model-id 'default)))
+         (define pricing (hash-ref config 'pricing_config #f))
+         (when (and pricing (hash? pricing))
+           (define pay (hash-ref pricing 'pay_as_you_go #f))
+           (when (and pay (hash? pay))
+             ;; Portkey prices are in cents per token
+             ;; Convert to dollars per 1M tokens: cents * 10000
+             (define input-cents (hash-ref pay 'input_tokens 0))
+             (define output-cents (hash-ref pay 'output_tokens 0))
+             (when (and (number? input-cents) (number? output-cents))
+               (set! found-any? #t)
+               (hash-set! current-pricing (symbol->string model-id)
+                          (cons (* input-cents 10000.0) (* output-cents 10000.0))))))))
+     found-any?]
+    [else #f]))
+
+;; Fetch from OpenRouter-style API (prices are per-token, multiply by 1M)
+(define (fetch-openrouter-style-pricing! url)
+  (define resp (fetch-json url))
+  (define models (and resp (hash-ref resp 'data '())))
+  (cond
+    [(or (not models) (null? models)) #f]
+    [else
+     (define found-pricing? #f)
+     (for ([model (in-list models)])
+       (define id (hash-ref model 'id ""))
+       (define pricing (hash-ref model 'pricing #f))
+       (when (and pricing (hash? pricing))
+         (set! found-pricing? #t)
+         (define prompt (string->number (format "~a" (hash-ref pricing 'prompt "0"))))
+         (define completion (string->number (format "~a" (hash-ref pricing 'completion "0"))))
+         (when (and prompt completion)
+           (define simple-id (if (string-prefix? id "openai/") (substring id 7) id))
+           (hash-set! current-pricing simple-id 
+                      (cons (* prompt 1000000.0) (* completion 1000000.0))))))
+     found-pricing?]))
 
 (define (update-pricing!)
   (define base-url (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1"))
-  (define primary-url (string-append (if (string-suffix? base-url "/") (substring base-url 0 (sub1 (string-length base-url))) base-url) "/models"))
-  (define fallback-url "https://openrouter.ai/api/v1/models")
-
-  (define (try-update-from! models)
-    (cond
-      [(or (not models) (null? models)) #f]
-      [else
-       (define found-pricing? #f)
-       (for ([model (in-list models)])
-         (define id (hash-ref model 'id))
-         (define pricing (hash-ref model 'pricing #f)) ;; Check if 'pricing' field exists
-         (when (and pricing (hash? pricing))
-           (set! found-pricing? #t)
-           (define prompt (string->number (format "~a" (hash-ref pricing 'prompt "0"))))
-           (define completion (string->number (format "~a" (hash-ref pricing 'completion "0"))))
-           (when (and prompt completion)
-             (define simple-id (if (string-prefix? id "openai/") (substring id 7) id))
-             (hash-set! current-pricing simple-id 
-                        (cons (* prompt 1000000.0) (* completion 1000000.0))))))
-       found-pricing?]))
-
-  ;; 1. Try Base URL
-  (define base-success? (try-update-from! (fetch-models primary-url)))
+  (define clean-base (if (string-suffix? base-url "/") 
+                         (substring base-url 0 (sub1 (string-length base-url))) 
+                         base-url))
   
-  ;; 2. If Base URL didn't have pricing data, try Fallback
+  ;; 1. Try configured base URL first (may have custom/enterprise pricing)
+  (define base-success? (fetch-openrouter-style-pricing! (string-append clean-base "/models")))
+  
+  ;; 2. Fallback to Portkey (free, 2300+ models, no API key)
   (unless base-success?
-     (log-info "No pricing data found at ~a. Falling back to OpenRouter." primary-url)
-     (try-update-from! (fetch-models fallback-url)))
+    (log-info "No pricing at ~a. Trying Portkey." clean-base)
+    (define portkey-providers '("openai" "anthropic" "google" "deepseek" "mistral-ai" "cohere" "groq"))
+    (define portkey-success? 
+      (for/or ([provider (in-list portkey-providers)])
+        (fetch-portkey-pricing! provider)))
+    
+    ;; 3. Last resort: OpenRouter
+    (unless portkey-success?
+      (log-info "Portkey unavailable. Falling back to OpenRouter.")
+      (fetch-openrouter-style-pricing! "https://openrouter.ai/api/v1/models")))
 
   (set-box! pricing-updated? #t)
   #t)

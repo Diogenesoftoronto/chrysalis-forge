@@ -177,6 +177,9 @@ Comprehensive documentation is available in the `doc/` directory:
 | [**ARCHITECTURE.md**](doc/ARCHITECTURE.md) | System architecture — layers, data flow, DSPy programming model, phenotype spaces |
 | [**USAGE.md**](doc/USAGE.md) | Usage guide — installation, CLI, tools, modes, security, self-evolution |
 | [**API.md**](doc/API.md) | API reference — data structures, functions, extending the system |
+| [**CONFIG.md**](doc/CONFIG.md) | Configuration reference — TOML settings, environment variables |
+| [**SERVICE.md**](doc/SERVICE.md) | Service layer — authentication, billing, rate limiting, API router |
+| [**RDF-SEMANTIC.md**](doc/RDF-SEMANTIC.md) | Semantic memory — vector store, RDF knowledge graphs |
 | [**geometric-decomposition.md**](doc/geometric-decomposition.md) | Deep dive into the geometric decomposition system |
 
 ### For Researchers
