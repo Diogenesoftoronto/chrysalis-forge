@@ -2,7 +2,12 @@
 (provide make-openai-sender validate-api-key make-openai-image-generator summarize-conversation estimate-tokens)
 (require net/http-client json net/url racket/string "../utils/utils-spinner.rkt")
 
-(define (make-openai-sender #:model [model "gpt-5.2"] #:api-key [key #f] #:api-base [base "https://api.openai.com/v1"])
+(define (make-openai-sender #:model [model "gpt-5.2"]
+                            #:api-key [key #f]
+                            #:api-base [base "https://api.openai.com/v1"]
+                            ;; When set, forwarded to OpenAI `response_format`.
+                            ;; Use this only when you *need* structured JSON output.
+                            #:response-format [response-format #f])
   (define k (or key (getenv "OPENAI_API_KEY")))
   (define provider (detect-provider-from-base base))
   (define u (string->url base))
@@ -38,13 +43,19 @@
 
   (λ (prompt)
     (define headers (list auth-header "Content-Type: application/json"))
-    (define content 
+    (define messages-list
       (cond 
-        [(string? prompt) prompt]
-        [(list? prompt) prompt] ; Already structured
-        [else (format "~a" prompt)]))
+        [(string? prompt) (list (hash 'role "user" 'content prompt))]
+        [(list? prompt) prompt] ; Already structured messages
+        [else (list (hash 'role "user" 'content (format "~a" prompt)))]))
     
-    (define payload (jsexpr->bytes (hash 'model model 'response_format (hash 'type "json_object") 'messages (list (hash 'role "user" 'content content)))))
+    ;; By default, do NOT force JSON responses (it makes normal chat look like JSON).
+    ;; Only include response_format when explicitly requested by the caller.
+    (define payload-hash
+      (if response-format
+          (hash 'model model 'response_format response-format 'messages messages-list)
+          (hash 'model model 'messages messages-list)))
+    (define payload (jsexpr->bytes payload-hash))
     (define start-time (current-inexact-milliseconds))
     (define s-thread (start-spinner! "Thinking...")) ;; User feedback
     (define-values (status _ in) (http-sendrecv host safe-endpoint #:port port #:method "POST" #:headers headers #:data payload #:ssl? ssl?))

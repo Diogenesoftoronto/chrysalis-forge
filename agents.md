@@ -103,3 +103,47 @@ Manage long-running services:
 - `spawn-service!`: Start background process
 - `stop-service!`: Terminate service
 - `list-services!`: View active services
+
+## Thread System (`src/core/thread-manager.rkt`, `src/stores/thread-store.rkt`)
+
+Threads provide user-facing conversation continuity while hiding session implementation details.
+
+### Hierarchy
+```
+Project → Thread → Context Nodes
+                 ↓ (hidden)
+              Sessions
+```
+
+### Thread Relations
+- `continues_from`: Linear continuation of a thread
+- `child_of`: Hierarchical breakdown into subtopics
+- `relates_to`: Loose association
+
+### CLI Commands
+```
+/thread list           - List all threads
+/thread new <title>    - Create new thread
+/thread switch <id>    - Switch to a thread
+/thread continue       - Create continuation thread
+/thread child <title>  - Create child thread
+/thread info           - Show current thread details
+/thread context add    - Add hierarchical context node
+```
+
+### HTTP API
+- `GET/POST /v1/threads` - List/create threads
+- `GET/PATCH /v1/threads/:id` - Get/update thread
+- `POST /v1/threads/:id/messages` - Chat on thread
+- `POST /v1/threads/:id/relations` - Link threads
+- `GET/POST /v1/threads/:id/contexts` - Context nodes
+- `GET/POST /v1/projects` - Project management
+
+### Key Functions
+```racket
+(ensure-thread user-id #:title "My task")     ; Get or create thread
+(thread-continue user-id from-id)              ; Create continuation
+(thread-spawn-child user-id parent-id title)   ; Create child thread
+(get-or-create-session user-id thread-id)      ; Hidden session management
+(auto-rotate-if-needed! user-id thread-id)     ; Auto session rotation
+```

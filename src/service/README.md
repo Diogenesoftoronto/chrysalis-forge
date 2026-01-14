@@ -78,13 +78,42 @@ allowed = ["gpt-5.2", "gpt-4o", "claude-3-opus"]
 | `POST` | `/provider-keys` | Add provider key |
 | `DELETE` | `/provider-keys/{provider}` | Remove key |
 
-### Sessions
+### Sessions (Internal)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/v1/sessions` | List sessions |
 | `POST` | `/v1/sessions` | Create session |
 | `GET` | `/v1/sessions/{id}` | Get session + messages |
+
+### Threads (User-Facing)
+
+Threads provide conversation continuity across sessions. Sessions are hidden implementation details that get rotated automatically.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/threads` | List threads |
+| `POST` | `/v1/threads` | Create thread |
+| `GET` | `/v1/threads/{id}` | Get thread + relations + contexts |
+| `PATCH` | `/v1/threads/{id}` | Update thread title/status |
+| `POST` | `/v1/threads/{id}/messages` | Chat on a thread |
+| `POST` | `/v1/threads/{id}/relations` | Link threads |
+| `GET` | `/v1/threads/{id}/contexts` | Get context hierarchy |
+| `POST` | `/v1/threads/{id}/contexts` | Add context node |
+
+#### Thread Relations
+
+- `continues_from` - This thread continues from another
+- `child_of` - Hierarchical child thread
+- `relates_to` - Loose association
+
+### Projects
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/projects` | List projects |
+| `POST` | `/v1/projects` | Create project |
+| `GET` | `/v1/projects/{id}` | Get project + threads |
 
 ### OpenAI-Compatible
 

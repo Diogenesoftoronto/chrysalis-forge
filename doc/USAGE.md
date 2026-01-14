@@ -145,13 +145,15 @@ For multi-user deployments or remote access, run Chrysalis Forge as an HTTP serv
 chrysalis --serve --serve-port 8080
 ```
 
-This exposes an OpenAI-compatible API at `/v1/chat/completions`, meaning existing tools that speak the OpenAI protocol can connect directly. The service also provides endpoints for user management (`/auth/register`, `/auth/login`) and session tracking (`/v1/sessions`).
+This exposes an OpenAI-compatible API at `/v1/chat/completions`, meaning existing tools that speak the OpenAI protocol can connect directly. The service also provides endpoints for user management (`/auth/register`, `/auth/login`), higher-level **thread** and **project** management (`/v1/threads`, `/v1/projects`), and lower-level session tracking (`/v1/sessions`) which is now mostly an internal implementation detail.
 
 Connect with the included client:
 
 ```bash
 chrysalis-client --url http://localhost:8080 --api-key your-jwt-token
 ```
+
+Client applications that want durable conversation state should model it in terms of **threads** (and optionally **projects**) rather than raw sessions; the server automatically rotates and archives underlying sessions while keeping thread IDs stable.
 
 ### IDE Integration
 

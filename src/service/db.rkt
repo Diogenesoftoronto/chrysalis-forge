@@ -430,3 +430,264 @@
      ON CONFLICT(user_id, COALESCE(org_id, ''), date) 
      DO UPDATE SET messages = messages + 1, tokens = tokens + ?, cost_usd = cost_usd + ?"
     user-id org-id date tokens cost-usd tokens cost-usd))
+
+;; ============================================================================
+;; Project Operations
+;; ============================================================================
+
+(define (project-create! user-id name #:org-id [org-id #f] #:slug [slug #f] 
+                         #:description [description #f] #:settings [settings (hash)])
+  "Create a new project"
+  (define conn (get-db))
+  (define id (uuid))
+  (query-exec conn
+    "INSERT INTO projects (id, org_id, owner_id, slug, name, description, settings)
+     VALUES (?, ?, ?, ?, ?, ?, ?)"
+    id org-id user-id slug name description (hash->json settings))
+  id)
+
+(define (project-find-by-id id)
+  "Find project by ID"
+  (define conn (get-db))
+  (define row (query-maybe-row conn
+    "SELECT id, org_id, owner_id, slug, name, description, settings, created_at, updated_at, is_archived
+     FROM projects WHERE id = ?" id))
+  (and row
+       (let ([h (row->hash row '(id org_id owner_id slug name description settings created_at updated_at is_archived))])
+         (hash-set h 'settings (json->hash (hash-ref h 'settings))))))
+
+(define (project-list-for-user user-id #:org-id [org-id #f] #:limit [limit 50])
+  "List projects for a user"
+  (define conn (get-db))
+  (define rows 
+    (if org-id
+        (query-rows conn
+          "SELECT id, org_id, slug, name, description, created_at, updated_at, is_archived
+           FROM projects WHERE org_id = ? AND is_archived = FALSE ORDER BY updated_at DESC LIMIT ?"
+          org-id limit)
+        (query-rows conn
+          "SELECT id, org_id, slug, name, description, created_at, updated_at, is_archived
+           FROM projects WHERE owner_id = ? AND is_archived = FALSE ORDER BY updated_at DESC LIMIT ?"
+          user-id limit)))
+  (for/list ([row rows])
+    (row->hash row '(id org_id slug name description created_at updated_at is_archived))))
+
+(define (project-update! id #:name [name #f] #:description [description #f] #:settings [settings #f])
+  "Update project"
+  (define conn (get-db))
+  (when name
+    (query-exec conn "UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" name id))
+  (when description
+    (query-exec conn "UPDATE projects SET description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" description id))
+  (when settings
+    (query-exec conn "UPDATE projects SET settings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" (hash->json settings) id)))
+
+;; ============================================================================
+;; Thread Operations
+;; ============================================================================
+
+(define (thread-id-generate)
+  "Generate a thread ID in T-uuid format"
+  (format "T-~a" (uuid)))
+
+(define (thread-create! user-id #:org-id [org-id #f] #:project-id [project-id #f]
+                        #:title [title #f] #:metadata [metadata (hash)])
+  "Create a new thread"
+  (define conn (get-db))
+  (define id (thread-id-generate))
+  (query-exec conn
+    "INSERT INTO threads (id, user_id, org_id, project_id, title, metadata)
+     VALUES (?, ?, ?, ?, ?, ?)"
+    id user-id org-id project-id title (hash->json metadata))
+  id)
+
+(define (thread-find-by-id id)
+  "Find thread by ID"
+  (define conn (get-db))
+  (define row (query-maybe-row conn
+    "SELECT id, user_id, org_id, project_id, title, status, summary, metadata, created_at, updated_at
+     FROM threads WHERE id = ?" id))
+  (and row
+       (let ([h (row->hash row '(id user_id org_id project_id title status summary metadata created_at updated_at))])
+         (hash-set h 'metadata (json->hash (hash-ref h 'metadata))))))
+
+(define (thread-list-for-user user-id #:project-id [project-id #f] #:status [status #f] #:limit [limit 50])
+  "List threads for a user, optionally filtered by project"
+  (define conn (get-db))
+  (define base-query "SELECT id, project_id, title, status, summary, created_at, updated_at FROM threads WHERE user_id = ?")
+  (define query-parts (list base-query))
+  (define params (list user-id))
+  
+  (when project-id
+    (set! query-parts (append query-parts '(" AND project_id = ?")))
+    (set! params (append params (list project-id))))
+  (when status
+    (set! query-parts (append query-parts '(" AND status = ?")))
+    (set! params (append params (list status))))
+  (set! query-parts (append query-parts '(" ORDER BY updated_at DESC LIMIT ?")))
+  (set! params (append params (list limit)))
+  
+  (define rows (apply query-rows conn (apply string-append query-parts) params))
+  (for/list ([row rows])
+    (row->hash row '(id project_id title status summary created_at updated_at))))
+
+(define (thread-update! id #:title [title #f] #:status [status #f] #:summary [summary #f] #:metadata [metadata #f])
+  "Update thread fields"
+  (define conn (get-db))
+  (when title
+    (query-exec conn "UPDATE threads SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" title id))
+  (when status
+    (query-exec conn "UPDATE threads SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" status id))
+  (when summary
+    (query-exec conn "UPDATE threads SET summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" summary id))
+  (when metadata
+    (query-exec conn "UPDATE threads SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" (hash->json metadata) id)))
+
+(define (thread-touch! id)
+  "Update thread's updated_at timestamp"
+  (define conn (get-db))
+  (query-exec conn "UPDATE threads SET updated_at = CURRENT_TIMESTAMP WHERE id = ?" id))
+
+;; ============================================================================
+;; Thread Relation Operations
+;; ============================================================================
+
+(define (thread-relation-create! from-id to-id relation-type created-by)
+  "Create a relation between threads"
+  (define conn (get-db))
+  (define id (uuid))
+  (query-exec conn
+    "INSERT INTO thread_relations (id, from_thread_id, to_thread_id, relation_type, created_by)
+     VALUES (?, ?, ?, ?, ?)"
+    id from-id to-id relation-type created-by)
+  id)
+
+(define (thread-relations-for-thread thread-id)
+  "Get all relations involving a thread"
+  (define conn (get-db))
+  (define rows (query-rows conn
+    "SELECT id, from_thread_id, to_thread_id, relation_type, created_by, created_at
+     FROM thread_relations WHERE from_thread_id = ? OR to_thread_id = ?"
+    thread-id thread-id))
+  (for/list ([row rows])
+    (row->hash row '(id from_thread_id to_thread_id relation_type created_by created_at))))
+
+(define (thread-get-parent thread-id)
+  "Get parent thread if this is a child"
+  (define conn (get-db))
+  (define row (query-maybe-row conn
+    "SELECT to_thread_id FROM thread_relations 
+     WHERE from_thread_id = ? AND relation_type = 'child_of'" thread-id))
+  (and row (vector-ref row 0)))
+
+(define (thread-get-children thread-id)
+  "Get child threads"
+  (define conn (get-db))
+  (define rows (query-rows conn
+    "SELECT from_thread_id FROM thread_relations 
+     WHERE to_thread_id = ? AND relation_type = 'child_of'" thread-id))
+  (for/list ([row rows]) (vector-ref row 0)))
+
+;; ============================================================================
+;; Thread Context Node Operations
+;; ============================================================================
+
+(define (thread-context-create! thread-id title #:parent-id [parent-id #f] #:kind [kind "note"]
+                                #:body [body #f] #:metadata [metadata (hash)] #:sort-order [sort-order 0])
+  "Create a context node within a thread"
+  (define conn (get-db))
+  (define id (uuid))
+  (query-exec conn
+    "INSERT INTO thread_contexts (id, thread_id, parent_id, title, kind, body, metadata, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    id thread-id parent-id title kind body (hash->json metadata) sort-order)
+  id)
+
+(define (thread-context-find-by-id id)
+  "Find a context node by ID"
+  (define conn (get-db))
+  (define row (query-maybe-row conn
+    "SELECT id, thread_id, parent_id, title, kind, body, metadata, sort_order, created_at, updated_at
+     FROM thread_contexts WHERE id = ?" id))
+  (and row
+       (let ([h (row->hash row '(id thread_id parent_id title kind body metadata sort_order created_at updated_at))])
+         (hash-set h 'metadata (json->hash (hash-ref h 'metadata))))))
+
+(define (thread-context-list thread-id)
+  "Get all context nodes for a thread as a flat list"
+  (define conn (get-db))
+  (define rows (query-rows conn
+    "SELECT id, parent_id, title, kind, body, metadata, sort_order, created_at, updated_at
+     FROM thread_contexts WHERE thread_id = ? ORDER BY sort_order, created_at" thread-id))
+  (for/list ([row rows])
+    (let ([h (row->hash row '(id parent_id title kind body metadata sort_order created_at updated_at))])
+      (hash-set h 'metadata (json->hash (hash-ref h 'metadata))))))
+
+(define (thread-context-tree thread-id)
+  "Build a tree structure from context nodes"
+  (define nodes (thread-context-list thread-id))
+  (define by-id (for/hash ([n nodes]) (values (hash-ref n 'id) n)))
+  (define children-map (make-hash))
+  
+  ;; Group nodes by parent
+  (for ([n nodes])
+    (define parent (hash-ref n 'parent_id #f))
+    (hash-update! children-map parent (λ (lst) (cons n lst)) '()))
+  
+  ;; Build tree recursively
+  (define (build-subtree node)
+    (define children (reverse (hash-ref children-map (hash-ref node 'id) '())))
+    (hash-set node 'children (map build-subtree children)))
+  
+  ;; Return roots (nodes with no parent)
+  (map build-subtree (reverse (hash-ref children-map #f '()))))
+
+(define (thread-context-update! id #:title [title #f] #:body [body #f] #:kind [kind #f] #:metadata [metadata #f])
+  "Update a context node"
+  (define conn (get-db))
+  (when title
+    (query-exec conn "UPDATE thread_contexts SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" title id))
+  (when body
+    (query-exec conn "UPDATE thread_contexts SET body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" body id))
+  (when kind
+    (query-exec conn "UPDATE thread_contexts SET kind = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" kind id))
+  (when metadata
+    (query-exec conn "UPDATE thread_contexts SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?" (hash->json metadata) id)))
+
+;; ============================================================================
+;; Session-Thread Linkage (Extended)
+;; ============================================================================
+
+(define (session-create-for-thread! user-id thread-id #:org-id [org-id #f] #:mode [mode "code"])
+  "Create a session linked to a thread"
+  (define conn (get-db))
+  (define id (uuid))
+  ;; Note: Requires sessions table to have thread_id column (migration v2)
+  (query-exec conn
+    "INSERT INTO sessions (id, user_id, org_id, mode, thread_id) VALUES (?, ?, ?, ?, ?)"
+    id user-id org-id mode thread-id)
+  ;; Touch thread
+  (thread-touch! thread-id)
+  id)
+
+(define (session-list-for-thread thread-id #:limit [limit 10])
+  "List sessions belonging to a thread"
+  (define conn (get-db))
+  (define rows (query-rows conn
+    "SELECT id, mode, title, created_at, updated_at, is_archived
+     FROM sessions WHERE thread_id = ? ORDER BY updated_at DESC LIMIT ?"
+    thread-id limit))
+  (for/list ([row rows])
+    (row->hash row '(id mode title created_at updated_at is_archived))))
+
+(define (thread-get-active-session thread-id)
+  "Get the most recent active session for a thread"
+  (define conn (get-db))
+  (query-maybe-value conn
+    "SELECT id FROM sessions WHERE thread_id = ? AND is_archived = FALSE ORDER BY updated_at DESC LIMIT 1"
+    thread-id))
+
+(define (session-archive! session-id)
+  "Archive a session"
+  (define conn (get-db))
+  (query-exec conn "UPDATE sessions SET is_archived = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?" session-id))

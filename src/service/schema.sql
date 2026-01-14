@@ -309,3 +309,78 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 -- Insert initial migration marker
 INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);
+
+-- ============================================================================
+-- THREADS & PROJECTS (v2 - Hierarchical Context)
+-- ============================================================================
+
+-- Projects (workspace containers)
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    org_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    slug TEXT,
+    name TEXT NOT NULL,
+    description TEXT,
+    settings TEXT DEFAULT '{}',  -- JSON: default_model, repo, root_dir, rules
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_archived BOOLEAN DEFAULT FALSE,
+    UNIQUE(org_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
+
+-- Threads (user-facing conversation continuity)
+CREATE TABLE IF NOT EXISTS threads (
+    id TEXT PRIMARY KEY,  -- T-uuid format
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    title TEXT,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'done', 'archived')),
+    summary TEXT,  -- Running summary for context continuity
+    metadata TEXT DEFAULT '{}',  -- JSON: tags, labels, etc.
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_threads_user ON threads(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_project ON threads(project_id, updated_at DESC);
+
+-- Thread Relations (continues_from, child_of, relates_to)
+CREATE TABLE IF NOT EXISTS thread_relations (
+    id TEXT PRIMARY KEY,
+    from_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    to_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL CHECK (relation_type IN ('continues_from', 'child_of', 'relates_to')),
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_thread_rel_from ON thread_relations(from_thread_id);
+CREATE INDEX IF NOT EXISTS idx_thread_rel_to ON thread_relations(to_thread_id);
+
+-- Thread Context Nodes (hierarchical breakdown within a thread)
+CREATE TABLE IF NOT EXISTS thread_contexts (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES thread_contexts(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    kind TEXT DEFAULT 'note' CHECK (kind IN ('note', 'task', 'area', 'file_group', 'plan')),
+    body TEXT,  -- Markdown description/instructions
+    metadata TEXT DEFAULT '{}',  -- JSON: paths, tags, status
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_thread_contexts_thread ON thread_contexts(thread_id);
+CREATE INDEX IF NOT EXISTS idx_thread_contexts_parent ON thread_contexts(parent_id);
+
+-- Link sessions to threads (sessions become hidden implementation detail)
+-- Note: This is an ALTER for existing sessions table
+-- Run separately if table exists: ALTER TABLE sessions ADD COLUMN thread_id TEXT REFERENCES threads(id) ON DELETE SET NULL;
+
+INSERT OR IGNORE INTO schema_migrations (version) VALUES (2);

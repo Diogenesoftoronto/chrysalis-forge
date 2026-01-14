@@ -7,6 +7,7 @@
 (require racket/string racket/match json racket/port racket/date racket/list net/http-client net/url)
 (require "config.rkt" "db.rkt" "auth.rkt" (except-in "key-vault.rkt" sha256-bytes))
 (require "../llm/model-registry.rkt")
+(require "../core/thread-manager.rkt")
 
 ;; ============================================================================
 ;; HTTP Response Helpers
@@ -350,6 +351,258 @@
   (json-response (hash-set session 'messages messages)))
 
 ;; ============================================================================
+;; Thread Endpoints (User-Facing Abstraction)
+;; ============================================================================
+
+(define (handle-list-threads request)
+  "GET /v1/threads - List user's threads"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define limit (string->number (or (get-query-param request 'limit) "50")))
+  (define project-id (get-query-param request 'project_id))
+  (define status (get-query-param request 'status))
+  
+  (define threads (thread-list-for-user (hash-ref user 'id) 
+                                         #:project-id project-id 
+                                         #:status status
+                                         #:limit limit))
+  (json-response (hash 'data threads)))
+
+(define (handle-create-thread request)
+  "POST /v1/threads - Create a new thread"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define body (parse-json-body request))
+  (define title (hash-ref body 'title #f))
+  (define project-id (hash-ref body 'project_id #f))
+  (define org-id (hash-ref body 'org_id #f))
+  (define parent-thread-id (hash-ref body 'parent_thread_id #f))
+  (define continues-from (hash-ref body 'continues_from #f))
+  
+  (when org-id
+    (unless (user-can-access-org? (hash-ref user 'id) org-id 'write)
+      (return (forbidden-response))))
+  
+  (define thread
+    (cond
+      [continues-from
+       (thread-continue (hash-ref user 'id) continues-from 
+                        #:title title #:project-id project-id)]
+      [parent-thread-id
+       (thread-spawn-child (hash-ref user 'id) parent-thread-id title 
+                           #:project-id project-id)]
+      [else
+       (ensure-thread (hash-ref user 'id) 
+                      #:project-id project-id 
+                      #:title title)]))
+  
+  (json-response thread #:status 201))
+
+(define (handle-get-thread request)
+  "GET /v1/threads/{id} - Get thread details with relations"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define thread-id (get-path-param request 'id))
+  (define thread (thread-find-by-id thread-id))
+  (unless thread (return (not-found-response)))
+  
+  (unless (equal? (hash-ref thread 'user_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  (define relations (thread-get-related thread-id))
+  (define contexts (thread-context-tree thread-id))
+  
+  (json-response (hash-set (hash-set thread 'relations relations) 
+                           'contexts contexts)))
+
+(define (handle-update-thread request)
+  "PATCH /v1/threads/{id} - Update thread"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define thread-id (get-path-param request 'id))
+  (define thread (thread-find-by-id thread-id))
+  (unless thread (return (not-found-response)))
+  
+  (unless (equal? (hash-ref thread 'user_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  (define body (parse-json-body request))
+  (thread-update! thread-id
+                  #:title (hash-ref body 'title #f)
+                  #:status (hash-ref body 'status #f)
+                  #:summary (hash-ref body 'summary #f))
+  
+  (json-response (thread-find-by-id thread-id)))
+
+(define (handle-thread-chat request)
+  "POST /v1/threads/{id}/messages - Chat on a thread"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define thread-id (get-path-param request 'id))
+  (define thread (thread-find-by-id thread-id))
+  (unless thread (return (not-found-response)))
+  
+  (unless (equal? (hash-ref thread 'user_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  (define body (parse-json-body request))
+  (define prompt (hash-ref body 'content #f))
+  (define mode (hash-ref body 'mode "code"))
+  (define context-node-id (hash-ref body 'context_node_id #f))
+  
+  (unless prompt
+    (return (error-response "Message content required")))
+  
+  ;; Prepare for chat (gets/creates session, checks rotation)
+  (define prep (thread-chat-prepare (hash-ref user 'id) prompt
+                                    #:thread-id thread-id
+                                    #:mode mode
+                                    #:context-node-id context-node-id))
+  
+  ;; TODO: Actually invoke LLM with (hash-ref prep 'session_id)
+  ;; This is a placeholder showing the structure
+  (json-response 
+   (hash 'thread_id thread-id
+         'session_id (hash-ref prep 'session_id)
+         'context (hash-ref prep 'context)
+         'rotation_needed (hash-ref prep 'rotation_needed)
+         'message "LLM integration pending")))
+
+(define (handle-create-thread-relation request)
+  "POST /v1/threads/{id}/relations - Create thread relation"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define from-thread-id (get-path-param request 'id))
+  (define from-thread (thread-find-by-id from-thread-id))
+  (unless from-thread (return (not-found-response)))
+  
+  (unless (equal? (hash-ref from-thread 'user_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  (define body (parse-json-body request))
+  (define to-thread-id (hash-ref body 'to_thread_id #f))
+  (define relation-type (hash-ref body 'relation_type "relates_to"))
+  
+  (unless to-thread-id
+    (return (error-response "to_thread_id required")))
+  
+  (unless (member relation-type '("continues_from" "child_of" "relates_to"))
+    (return (error-response "Invalid relation_type")))
+  
+  (define rel-id (thread-link! from-thread-id to-thread-id (hash-ref user 'id) 
+                               #:type relation-type))
+  (json-response (hash 'id rel-id 
+                       'from_thread_id from-thread-id 
+                       'to_thread_id to-thread-id 
+                       'relation_type relation-type) 
+                 #:status 201))
+
+(define (handle-list-thread-contexts request)
+  "GET /v1/threads/{id}/contexts - Get thread context hierarchy"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define thread-id (get-path-param request 'id))
+  (define thread (thread-find-by-id thread-id))
+  (unless thread (return (not-found-response)))
+  
+  (unless (equal? (hash-ref thread 'user_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  (json-response (hash 'data (thread-context-tree thread-id))))
+
+(define (handle-create-thread-context request)
+  "POST /v1/threads/{id}/contexts - Add context node"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define thread-id (get-path-param request 'id))
+  (define thread (thread-find-by-id thread-id))
+  (unless thread (return (not-found-response)))
+  
+  (unless (equal? (hash-ref thread 'user_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  (define body (parse-json-body request))
+  (define title (hash-ref body 'title #f))
+  (define parent-id (hash-ref body 'parent_id #f))
+  (define kind (hash-ref body 'kind "note"))
+  (define body-text (hash-ref body 'body #f))
+  
+  (unless title
+    (return (error-response "Title required")))
+  
+  (define ctx-id (thread-add-context! thread-id title
+                                       #:parent-id parent-id
+                                       #:kind kind
+                                       #:body body-text))
+  (json-response (thread-context-find-by-id ctx-id) #:status 201))
+
+;; ============================================================================
+;; Project Endpoints
+;; ============================================================================
+
+(define (handle-list-projects request)
+  "GET /v1/projects - List user's projects"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define limit (string->number (or (get-query-param request 'limit) "50")))
+  (define org-id (get-query-param request 'org_id))
+  
+  (define projects (project-list-for-user (hash-ref user 'id) 
+                                           #:org-id org-id 
+                                           #:limit limit))
+  (json-response (hash 'data projects)))
+
+(define (handle-create-project request)
+  "POST /v1/projects - Create a new project"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define body (parse-json-body request))
+  (define name (hash-ref body 'name #f))
+  (define slug (hash-ref body 'slug #f))
+  (define description (hash-ref body 'description #f))
+  (define org-id (hash-ref body 'org_id #f))
+  
+  (unless name
+    (return (error-response "Project name required")))
+  
+  (when org-id
+    (unless (user-can-access-org? (hash-ref user 'id) org-id 'write)
+      (return (forbidden-response))))
+  
+  (define project-id (project-create! (hash-ref user 'id) name
+                                       #:org-id org-id
+                                       #:slug slug
+                                       #:description description))
+  (json-response (project-find-by-id project-id) #:status 201))
+
+(define (handle-get-project request)
+  "GET /v1/projects/{id} - Get project details"
+  (define user (require-auth request))
+  (unless user (return (unauthorized-response)))
+  
+  (define project-id (get-path-param request 'id))
+  (define project (project-find-by-id project-id))
+  (unless project (return (not-found-response)))
+  
+  (unless (equal? (hash-ref project 'owner_id) (hash-ref user 'id))
+    (return (forbidden-response)))
+  
+  ;; Include threads for this project
+  (define threads (thread-list-for-user (hash-ref user 'id) 
+                                         #:project-id project-id))
+  (json-response (hash-set project 'threads threads)))
+
+;; ============================================================================
 ;; OpenAI-Compatible Chat Completions
 ;; ============================================================================
 
@@ -586,7 +839,7 @@
            ["DELETE" (handle-delete-provider-key request)]
            [_ (error-response "Method not allowed" #:status 405)]))]
       
-      ;; Sessions
+      ;; Sessions (internal - prefer threads)
       [(match-route "GET" "/v1/sessions") (handle-list-sessions request)]
       [(match-route "POST" "/v1/sessions") (handle-create-session request)]
       [(route-matches? "/v1/sessions/:id" path)
@@ -594,6 +847,46 @@
                                 (extract-path-params "/v1/sessions/:id" path))])
          (match method
            ["GET" (handle-get-session request)]
+           [_ (error-response "Method not allowed" #:status 405)]))]
+      
+      ;; Threads (user-facing)
+      [(match-route "GET" "/v1/threads") (handle-list-threads request)]
+      [(match-route "POST" "/v1/threads") (handle-create-thread request)]
+      [(route-matches? "/v1/threads/:id/messages" path)
+       (let ([request (hash-set request 'path-params 
+                                (extract-path-params "/v1/threads/:id/messages" path))])
+         (match method
+           ["POST" (handle-thread-chat request)]
+           [_ (error-response "Method not allowed" #:status 405)]))]
+      [(route-matches? "/v1/threads/:id/relations" path)
+       (let ([request (hash-set request 'path-params 
+                                (extract-path-params "/v1/threads/:id/relations" path))])
+         (match method
+           ["POST" (handle-create-thread-relation request)]
+           [_ (error-response "Method not allowed" #:status 405)]))]
+      [(route-matches? "/v1/threads/:id/contexts" path)
+       (let ([request (hash-set request 'path-params 
+                                (extract-path-params "/v1/threads/:id/contexts" path))])
+         (match method
+           ["GET" (handle-list-thread-contexts request)]
+           ["POST" (handle-create-thread-context request)]
+           [_ (error-response "Method not allowed" #:status 405)]))]
+      [(route-matches? "/v1/threads/:id" path)
+       (let ([request (hash-set request 'path-params 
+                                (extract-path-params "/v1/threads/:id" path))])
+         (match method
+           ["GET" (handle-get-thread request)]
+           ["PATCH" (handle-update-thread request)]
+           [_ (error-response "Method not allowed" #:status 405)]))]
+      
+      ;; Projects
+      [(match-route "GET" "/v1/projects") (handle-list-projects request)]
+      [(match-route "POST" "/v1/projects") (handle-create-project request)]
+      [(route-matches? "/v1/projects/:id" path)
+       (let ([request (hash-set request 'path-params 
+                                (extract-path-params "/v1/projects/:id" path))])
+         (match method
+           ["GET" (handle-get-project request)]
            [_ (error-response "Method not allowed" #:status 405)]))]
       
       ;; OpenAI-compatible endpoints

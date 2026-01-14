@@ -1,10 +1,12 @@
 #lang racket/gui
 
-(require racket/class racket/string racket/format racket/list racket/file json
+(require racket/class racket/string racket/format racket/list racket/file racket/date json racket/system
          "../stores/context-store.rkt"
          "../llm/dspy-core.rkt"
          "../utils/dotenv.rkt"
-         "../llm/model-registry.rkt")
+         "../llm/model-registry.rkt"
+         "../llm/pricing-model.rkt"
+         "../core/workflow-engine.rkt")
 
 (provide run-gui!)
 
@@ -16,6 +18,19 @@
 (define current-mode (make-parameter 'code))
 (define session-cost (box 0.0))
 (define session-tokens (box 0))
+(define first-message-sent? (box #f)) ; Track if first message sent for title generation
+
+;; GUI-specific config parameters (mirror main.rkt)
+(define gui-base-url (make-parameter (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1")))
+(define gui-vision-model (make-parameter (or (getenv "VISION_MODEL") (current-model))))
+(define gui-judge-model (make-parameter (or (getenv "LLM_JUDGE_MODEL") (current-model))))
+(define gui-budget (make-parameter (or (and (getenv "BUDGET") (string->number (getenv "BUDGET"))) +inf.0)))
+(define gui-timeout (make-parameter (or (and (getenv "TIMEOUT") (string->number (getenv "TIMEOUT"))) +inf.0)))
+(define gui-priority (make-parameter (or (getenv "PRIORITY") "best")))
+(define gui-security-level (make-parameter (or (and (getenv "PERMS") (string->number (getenv "PERMS"))) 1)))
+(define gui-llm-judge (make-parameter (or (and (getenv "LLM_JUDGE") (not (equal? (getenv "LLM_JUDGE") "0"))) #f)))
+(define gui-debug-level (make-parameter (or (and (getenv "DEBUG") (string->number (getenv "DEBUG"))) 0)))
+(define gui-pretty (make-parameter (or (getenv "PRETTY") "none")))
 
 ;; ============================================================================
 ;; Theme Colors
@@ -67,6 +82,25 @@
            [parent edit-menu]
            [callback (λ (item event) (clear-chat!))]))
 
+(define tools-menu (new menu% [label "&Tools"] [parent menu-bar]))
+(void (new menu-item%
+           [label "Configuration..."]
+           [parent tools-menu]
+           [callback (λ (item event) (show-config-dialog))]))
+(void (new menu-item%
+           [label "Workflows..."]
+           [parent tools-menu]
+           [callback (λ (item event) (show-workflows-dialog))]))
+(void (new menu-item%
+           [label "Run Raco Command..."]
+           [parent tools-menu]
+           [callback (λ (item event) (show-raco-dialog))]))
+(void (new separator-menu-item% [parent tools-menu]))
+(void (new menu-item%
+           [label "Initialize Project"]
+           [parent tools-menu]
+           [callback (λ (item event) (init-project!))]))
+
 (define help-menu (new menu% [label "&Help"] [parent menu-bar]))
 (void (new menu-item%
            [label "About"]
@@ -90,15 +124,76 @@
        [parent toolbar-panel]
        [label "Model:"]))
 
+(define (fallback-model-ids)
+  (with-handlers ([exn:fail? (λ (_) '())])
+    (define p (build-path (current-directory) "src" "llm" "default-models.json"))
+    (if (file-exists? p)
+        (let* ([j (call-with-input-file p read-json)]
+               [ms (hash-ref j 'models '())])
+          (sort
+           (remove-duplicates
+            (for/list ([m (in-list ms)]
+                       #:when (hash? m))
+              (hash-ref m 'id "")))
+           string<?))
+        '())))
+
+(define (fetch-model-ids)
+  ;; Mirror the TUI `/models` behavior: hit the configured /models endpoint.
+  (define api-key (or (getenv "OPENAI_API_KEY") ""))
+  (define base-url (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1"))
+  (cond
+    [(string=? (string-trim api-key) "")
+     (fallback-model-ids)]
+    [else
+     (define models (fetch-models-from-endpoint base-url api-key))
+     (define ids
+       (for/list ([m (in-list models)])
+         (cond
+           [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
+           [(string? m) m]
+           [else "unknown"])))
+     (sort (remove-duplicates ids) string<?)]))
+
 (define model-choice
-  (new combo-field%
+  (new choice%
        [parent toolbar-panel]
        [label #f]
-       [choices '("gpt-5.2" "gpt-4.1" "gpt-4.1-mini" "o3" "o4-mini" "claude-sonnet-4-20250514" "gemini-2.5-pro")]
-       [init-value (current-model)]
+       [choices '()] ; populated at startup via `refresh-models!`
        [min-width 180]
-       [callback (λ (field event)
-                   (current-model (send field get-value)))]))
+       [callback (λ (choice event)
+                   (define sel (send choice get-string-selection))
+                   (when (and sel (not (string=? sel "")))
+                     (current-model sel)))]))
+
+(define (refresh-models! #:show-errors? [show-errors? #f])
+  (with-handlers ([exn:fail?
+                   (λ (e)
+                     (when show-errors?
+                       (message-box "Models"
+                                    (format "Failed to fetch models:\n~a" (exn-message e))
+                                    main-frame
+                                    '(ok stop)))
+                     (define ids (fallback-model-ids))
+                     (send model-choice clear)
+                     (for ([m (in-list ids)]) (send model-choice append m)))])
+    (define ids (fetch-model-ids))
+    (send model-choice clear)
+    (for ([m (in-list ids)]) (send model-choice append m))
+    (define cur (current-model))
+    (cond
+      [(and cur (member cur ids))
+       (send model-choice set-string-selection cur)]
+      [(pair? ids)
+       (send model-choice set-selection 0)
+       (current-model (first ids))])))
+
+(void
+ (new button%
+      [parent toolbar-panel]
+      [label "Refresh"]
+      [min-width 70]
+      [callback (λ (_b _e) (refresh-models! #:show-errors? #t))]))
 
 ;; Spacer
 (void (new message% [parent toolbar-panel] [label "    "]))
@@ -122,12 +217,73 @@
 ;; Spacer
 (void (new message% [parent toolbar-panel] [label "    "]))
 
-;; Session display
+;; Priority selector
+(void (new message%
+           [parent toolbar-panel]
+           [label "Priority:"]))
+(define priority-choice
+  (new choice%
+       [parent toolbar-panel]
+       [label #f]
+       [choices '("best" "fast" "cheap" "verbose")]
+       [selection 0]  ; default to 'best'
+       [callback (λ (choice event)
+                   (define priorities '("best" "fast" "cheap" "verbose"))
+                   (define sel (list-ref priorities (send choice get-selection)))
+                   (gui-priority sel)
+                   ;; Update context
+                   (define db (load-ctx))
+                   (define ctx (ctx-get-active))
+                   (save-ctx!
+                    (hash-set db 'items
+                              (hash-set (hash-ref db 'items)
+                                       (hash-ref db 'active)
+                                       (struct-copy Ctx ctx [priority (string->symbol sel)])))))]))
+;; Set initial priority from context
+(let ([ctx (ctx-get-active)])
+  (define ctx-priority (symbol->string (Ctx-priority ctx)))
+  (define priorities '("best" "fast" "cheap" "verbose"))
+  (define idx (for/or ([p priorities] [i (in-naturals)])
+                (and (equal? p ctx-priority) i)))
+  (when idx (send priority-choice set-selection idx)))
+
+;; Spacer
+(void (new message% [parent toolbar-panel] [label "    "]))
+
+;; Judge toggle
+(define judge-checkbox
+  (new check-box%
+       [parent toolbar-panel]
+       [label "LLM Judge"]
+       [value (gui-llm-judge)]
+       [callback (λ (cb event)
+                   (gui-llm-judge (send cb get-value)))]))
+;; Set initial judge state from env
+(send judge-checkbox set-value (gui-llm-judge))
+
+;; Spacer
+(void (new message% [parent toolbar-panel] [label "    "]))
+
+;; Session display with clickable chooser
+(define session-panel
+  (new horizontal-panel%
+       [parent toolbar-panel]
+       [stretchable-width #f]
+       [alignment '(left center)]))
+
 (define session-label
   (new message%
-       [parent toolbar-panel]
+       [parent session-panel]
        [label "Session: default"]
        [auto-resize #t]))
+
+(define session-chooser-button
+  (new button%
+       [parent session-panel]
+       [label "▼"]
+       [min-width 25]
+       [min-height 25]
+       [callback (λ (b e) (show-session-chooser!))]))
 
 ;; Right-aligned status
 (define status-panel
@@ -299,6 +455,64 @@
   (when (and content (not (string=? (string-trim content) "")))
     (send input-text erase)
     
+    ;; Generate session title after first message
+    (when (not (unbox first-message-sent?))
+      (set-box! first-message-sent? #t)
+      (thread
+       (λ ()
+         (with-handlers ([exn:fail? (λ (e) (void))])
+           ;; Try to generate title using cheap model
+           (define api-key (or (getenv "OPENAI_API_KEY") ""))
+           (when (not (string=? api-key ""))
+             (define openai-mod (dynamic-require 'chrysalis-forge/src/llm/openai-client #f))
+             (define make-sender (dynamic-require 'chrysalis-forge/src/llm/openai-client 'make-openai-sender))
+             (define base-url (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1"))
+             (define sender (make-sender #:model "gpt-4o-mini" #:api-key api-key #:api-base base-url))
+             (define prompt (format "Generate a concise, descriptive title (3-8 words) for this conversation based on the user's first message. Return only the title, no quotes or explanation.\n\nUser message: ~a" 
+                                    (if (> (string-length content) 200)
+                                        (string-append (substring content 0 200) "...")
+                                        content)))
+             (define-values (ok? title-text usage) (sender prompt))
+             (when ok?
+               ;; Handle response - sender uses json_object format, so content might be JSON string
+               (define title-str
+                 (cond
+                   [(string? title-text)
+                    ;; Try to parse as JSON first (since response_format is json_object)
+                    (with-handlers ([exn:fail? (λ (_) title-text)])
+                      (define parsed (string->jsexpr title-text))
+                      (if (hash? parsed)
+                          ;; Extract from common JSON keys
+                          (or (hash-ref parsed 'title #f)
+                              (hash-ref parsed 'text #f)
+                              (hash-ref parsed 'content #f)
+                              title-text)
+                          title-text))]
+                   [(hash? title-text)
+                    ;; If it's already a hash, extract from common keys
+                    (or (hash-ref title-text 'title #f)
+                        (hash-ref title-text 'text #f)
+                        (hash-ref title-text 'content #f)
+                        (jsexpr->string title-text))]
+                   [else (format "~a" title-text)]))
+               (when (and title-str (string? title-str))
+                 (define clean-title (string-trim title-str))
+                 (when (> (string-length clean-title) 0)
+                   ;; Remove quotes if present
+                   (define final-title
+                     (if (and (> (string-length clean-title) 2)
+                              (equal? (substring clean-title 0 1) "\"")
+                              (equal? (substring clean-title (sub1 (string-length clean-title))) "\""))
+                         (substring clean-title 1 (sub1 (string-length clean-title)))
+                         clean-title))
+                   (when (> (string-length final-title) 0)
+                     (queue-callback
+                      (λ ()
+                        (define db (load-ctx))
+                        (define active-name (hash-ref db 'active))
+                        (session-update-title! active-name final-title)
+                        (update-session-label!))))))))))))
+    
     ;; Display user message
     (append-message! 'user content)
     (set-status! "Thinking...")
@@ -354,7 +568,7 @@
   (define make-sender (dynamic-require 'chrysalis-forge/src/llm/openai-client 'make-openai-sender))
   
   (define api-key (or (getenv "OPENAI_API_KEY") ""))
-  (define base-url (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1"))
+  (define base-url (gui-base-url))  ; Use GUI config parameter
   
   (define sender
     (make-sender #:model (current-model) #:api-key api-key #:api-base base-url))
@@ -364,15 +578,41 @@
   
   (if ok?
       (let ()
+        ;; Handle result - might be JSON string if response_format is json_object
+        (define response-text
+          (cond
+            [(string? result)
+             ;; Try to parse as JSON first (since response_format is json_object)
+             (with-handlers ([exn:fail? (λ (_) result)])
+               (define parsed (string->jsexpr result))
+               (if (hash? parsed)
+                   ;; Extract from common JSON keys, or use the whole thing as string
+                   (or (hash-ref parsed 'content #f)
+                       (hash-ref parsed 'text #f)
+                       (hash-ref parsed 'message #f)
+                       (jsexpr->string parsed))
+                   result))]
+            [(hash? result)
+             ;; If it's already a hash, extract content
+             (or (hash-ref result 'content #f)
+                 (hash-ref result 'text #f)
+                 (jsexpr->string result))]
+            [else (format "~a" result)]))
+        
         ;; Update stats
         (when (hash? usage)
+          (define tokens-in (hash-ref usage 'prompt_tokens 0))
+          (define tokens-out (hash-ref usage 'completion_tokens 0))
+          (define total-tokens (hash-ref usage 'total_tokens 0))
           (set-box! session-tokens
-                    (+ (unbox session-tokens)
-                       (hash-ref usage 'total_tokens 0))))
+                    (+ (unbox session-tokens) total-tokens))
+          (set-box! session-cost
+                    (+ (unbox session-cost)
+                       (calculate-cost (current-model) tokens-in tokens-out))))
         
         ;; Update context with history
         (define new-history
-          (append messages (list (hash 'role "assistant" 'content result))))
+          (append messages (list (hash 'role "assistant" 'content response-text))))
         (define db (load-ctx))
         (save-ctx!
          (hash-set db 'items
@@ -383,7 +623,7 @@
         ;; Display response
         (queue-callback
          (λ ()
-           (append-message! 'assistant result)
+           (append-message! 'assistant response-text)
            (update-status-display!)
            (set-status! "Ready"))))
       
@@ -397,8 +637,16 @@
 ;; ============================================================================
 
 (define (update-session-label!)
-  (define-values (sessions active) (session-list))
-  (send session-label set-label (format "Session: ~a" active)))
+  (define db (load-ctx))
+  (define active-name (hash-ref db 'active))
+  (define metadata (hash-ref db 'metadata (hash)))
+  (define meta (hash-ref metadata active-name (hash)))
+  (define title (hash-ref meta 'title #f))
+  (define session-id (hash-ref meta 'id (symbol->string active-name)))
+  
+  (if title
+      (send session-label set-label (format "Session: ~a" title))
+      (send session-label set-label (format "Session: ~a" session-id))))
 
 (define (update-mode-context!)
   (define db (load-ctx))
@@ -411,7 +659,7 @@
 
 (define (new-session-dialog)
   (define dialog (new dialog% [label "New Session"] [parent main-frame] [width 300] [height 150]))
-  (define name-field (new text-field% [parent dialog] [label "Session Name:"]))
+  (define name-field (new text-field% [parent dialog] [label "Session Name (optional):"]))
   
   (define mode-panel (new horizontal-panel% [parent dialog] [stretchable-height #f]))
   (new message% [parent mode-panel] [label "Mode:"])
@@ -432,50 +680,119 @@
        [label "Create"]
        [callback (λ (b e)
                    (define name (send name-field get-value))
-                   (when (and name (not (string=? name "")))
-                     (define modes '(ask architect code semantic))
-                     (define mode (list-ref modes (send mode-selector get-selection)))
-                     (with-handlers ([exn:fail?
-                                      (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
-                       (session-create! name mode)
-                       (session-switch! name)
-                       (update-session-label!)
-                       (clear-chat!)
-                       (send dialog show #f))))])
+                   (define modes '(ask architect code semantic))
+                   (define mode (list-ref modes (send mode-selector get-selection)))
+                   (with-handlers ([exn:fail?
+                                    (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
+                     ;; Create session with auto-generated ID if no name provided
+                     (if (and name (not (string=? (string-trim name) "")))
+                         (begin
+                           (session-create! name mode)
+                           (session-switch! name))
+                         (let* ([session-id (generate-session-id)]
+                                [session-name (string->symbol (format "session-~a" session-id))])
+                           (session-create! session-name mode #:id session-id)
+                           (session-switch! session-name)))
+                     (set-box! first-message-sent? #f) ; Reset for new session
+                     (update-session-label!)
+                     (clear-chat!)
+                     (send dialog show #f)))])
   
   (send dialog show #t))
 
-(define (switch-session-dialog)
-  (define-values (sessions active) (session-list))
-  (define session-names (map symbol->string sessions))
+(define (show-session-chooser!)
+  "Show a dialog to choose or manage sessions, sorted by last accessed"
+  (define sessions (session-list-with-metadata))
   
-  (define dialog (new dialog% [label "Switch Session"] [parent main-frame] [width 300] [height 200]))
+  ;; Sort by updated_at (most recent first), then by created_at
+  (define sorted-sessions
+    (sort sessions >
+          #:key (λ (s)
+                  (or (hash-ref s 'updated_at #f)
+                      (hash-ref s 'created_at #f)
+                      0))))
   
+  (define dialog (new dialog% [label "Sessions"] [parent main-frame] [width 500] [height 400]))
+  
+  ;; Create a list box with custom display
   (define list-box
     (new list-box%
          [parent dialog]
-         [label "Sessions:"]
-         [choices session-names]
-         [selection (index-of session-names (symbol->string active))]))
+         [label "Sessions (sorted by last accessed):"]
+         [choices (for/list ([s sorted-sessions])
+                    (define id (hash-ref s 'id))
+                    (define title (hash-ref s 'title))
+                    (define created (hash-ref s 'created_at))
+                    (define is-active (hash-ref s 'is_active))
+                    (define date-str
+                      (if created
+                          (date->string (seconds->date created) #t)
+                          "Unknown"))
+                    (format "~a ~a~a~a"
+                            (if is-active "*" " ")
+                            (or title id)
+                            (if title (format " (~a)" id) "")
+                            (format " - ~a" date-str)))]
+         [style '(single)]
+         [selection (for/or ([s sorted-sessions] [i (in-naturals)])
+                      (and (hash-ref s 'is_active #f) i))]))
   
+  ;; Button panel
   (define button-panel (new horizontal-panel% [parent dialog] [alignment '(right center)]))
+  
+  (new button%
+       [parent button-panel]
+       [label "New Session"]
+       [callback (λ (b e)
+                   (send dialog show #f)
+                   (new-session-dialog))])
+  
+  (new button%
+       [parent button-panel]
+       [label "Delete"]
+       [callback (λ (b e)
+                   (define sel (send list-box get-selection))
+                   (when sel
+                     (define session (list-ref sorted-sessions sel))
+                     (define name (hash-ref session 'name))
+                     (define is-active (hash-ref session 'is_active))
+                     (if is-active
+                         (message-box "Error" "Cannot delete the active session" dialog '(ok stop))
+                         (when (eq? 'yes (message-box "Confirm" 
+                                                      (format "Delete session '~a'?" name)
+                                                      dialog
+                                                      '(yes-no caution)))
+                           (with-handlers ([exn:fail?
+                                            (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
+                             (session-delete! name)
+                             (send dialog show #f)
+                             (show-session-chooser!))))))])
+  
   (new button%
        [parent button-panel]
        [label "Cancel"]
        [callback (λ (b e) (send dialog show #f))])
+  
   (new button%
        [parent button-panel]
        [label "Switch"]
        [callback (λ (b e)
                    (define sel (send list-box get-selection))
                    (when sel
-                     (session-switch! (list-ref session-names sel))
+                     (define session (list-ref sorted-sessions sel))
+                     (define name (hash-ref session 'name))
+                     (session-switch! name)
+                     (set-box! first-message-sent? #f) ; Reset for switched session
                      (update-session-label!)
                      (clear-chat!)
                      (load-chat-history!)
                      (send dialog show #f)))])
   
   (send dialog show #t))
+
+(define (switch-session-dialog)
+  "Legacy function - redirects to new chooser"
+  (show-session-chooser!))
 
 (define (load-chat-history!)
   (define ctx (ctx-get-active))
@@ -485,6 +802,315 @@
     (define content (hash-ref msg 'content ""))
     (when (and (string? role) (string? content) (not (string=? role "system")) (not (string=? content "")))
       (append-message! (string->symbol role) content))))
+
+;; ============================================================================
+;; Configuration Dialog
+;; ============================================================================
+
+(define (show-config-dialog)
+  (define dialog (new dialog% [label "Configuration"] [parent main-frame] [width 500] [height 600]))
+  (define v-panel (new vertical-panel% [parent dialog] [alignment '(left top)] [spacing 10]))
+  
+  ;; Model
+  (define model-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent model-panel] [label "Model:"])
+  (define model-field (new text-field% [parent model-panel] [label #f] [min-width 200]
+                           [init-value (current-model)]))
+  
+  ;; Vision Model
+  (define vision-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent vision-panel] [label "Vision Model:"])
+  (define vision-field (new text-field% [parent vision-panel] [label #f] [min-width 200]
+                             [init-value (gui-vision-model)]))
+  
+  ;; Judge Model
+  (define judge-model-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent judge-model-panel] [label "Judge Model:"])
+  (define judge-model-field (new text-field% [parent judge-model-panel] [label #f] [min-width 200]
+                                 [init-value (gui-judge-model)]))
+  
+  ;; Base URL
+  (define url-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent url-panel] [label "Base URL:"])
+  (define url-field (new text-field% [parent url-panel] [label #f] [min-width 300]
+                         [init-value (gui-base-url)]))
+  
+  ;; Budget
+  (define budget-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent budget-panel] [label "Budget ($):"])
+  (define budget-field (new text-field% [parent budget-panel] [label #f] [min-width 150]
+                            [init-value (if (= (gui-budget) +inf.0) "" (number->string (gui-budget)))]))
+  
+  ;; Timeout
+  (define timeout-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent timeout-panel] [label "Timeout (seconds):"])
+  (define timeout-field (new text-field% [parent timeout-panel] [label #f] [min-width 150]
+                             [init-value (if (= (gui-timeout) +inf.0) "" (number->string (gui-timeout)))]))
+  
+  ;; Security Level
+  (define security-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent security-panel] [label "Security Level:"])
+  (define security-choice
+    (new choice%
+         [parent security-panel]
+         [label #f]
+         [choices '("0" "1" "2" "3" "god")]
+         [selection (min (gui-security-level) 4)]))
+  
+  ;; Debug Level
+  (define debug-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent debug-panel] [label "Debug Level:"])
+  (define debug-choice
+    (new choice%
+         [parent debug-panel]
+         [label #f]
+         [choices '("0" "1" "2")]
+         [selection (min (gui-debug-level) 2)]))
+  
+  ;; Pretty
+  (define pretty-panel (new horizontal-panel% [parent v-panel] [stretchable-height #f]))
+  (new message% [parent pretty-panel] [label "Pretty Output:"])
+  (define pretty-choice
+    (new choice%
+         [parent pretty-panel]
+         [label #f]
+         [choices '("none" "glow")]
+         [selection (if (equal? (gui-pretty) "glow") 1 0)]))
+  
+  ;; Buttons
+  (define button-panel (new horizontal-panel% [parent dialog] [alignment '(right center)]))
+  (new button%
+       [parent button-panel]
+       [label "Cancel"]
+       [callback (λ (b e) (send dialog show #f))])
+  (new button%
+       [parent button-panel]
+       [label "Save"]
+       [callback (λ (b e)
+                   (with-handlers ([exn:fail?
+                                    (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
+                     ;; Update parameters
+                     (current-model (send model-field get-value))
+                     (gui-vision-model (send vision-field get-value))
+                     (gui-judge-model (send judge-model-field get-value))
+                     (gui-base-url (send url-field get-value))
+                     
+                     (define budget-str (send budget-field get-value))
+                     (gui-budget (if (string=? budget-str "") +inf.0 (string->number budget-str)))
+                     
+                     (define timeout-str (send timeout-field get-value))
+                     (gui-timeout (if (string=? timeout-str "") +inf.0 (string->number timeout-str)))
+                     
+                     (define security-val (send security-choice get-selection))
+                     (gui-security-level (if (= security-val 4) 4 security-val))
+                     
+                     (gui-debug-level (send debug-choice get-selection))
+                     (gui-pretty (list-ref '("none" "glow") (send pretty-choice get-selection)))
+                     
+                     ;; Update model choice in toolbar
+                     (define model-val (current-model))
+                     (define model-ids (fetch-model-ids))
+                     (when (member model-val model-ids)
+                       (send model-choice set-string-selection model-val))
+                     
+                     (message-box "Success" "Configuration saved." dialog '(ok))
+                     (send dialog show #f)))])
+  
+  (send dialog show #t))
+
+;; ============================================================================
+;; Workflows Dialog
+;; ============================================================================
+
+(define (show-workflows-dialog)
+  (define dialog (new dialog% [label "Workflows"] [parent main-frame] [width 600] [height 500]))
+  (define v-panel (new vertical-panel% [parent dialog] [alignment '(left top)] [spacing 10]))
+  
+  ;; List box for workflows
+  (define list-box
+    (new list-box%
+         [parent v-panel]
+         [label "Available Workflows:"]
+         [choices '()]
+         [style '(single)]
+         [min-height 300]))
+  
+  (define (refresh-workflows!)
+    (with-handlers ([exn:fail?
+                     (λ (e)
+                       (message-box "Error" (format "Failed to load workflows: ~a" (exn-message e)) dialog '(ok stop)))])
+      (define workflows-json (workflow-list))
+      (define workflows (string->jsexpr workflows-json))
+      (send list-box clear)
+      (for ([w workflows])
+        (define slug (hash-ref w 'slug "unknown"))
+        (define desc (hash-ref w 'description "No description"))
+        (send list-box append (format "~a - ~a" slug desc))))
+    (when (= (send list-box get-number) 0)
+      (send list-box append "No workflows found")))
+  
+  (refresh-workflows!)
+  
+  ;; Button panel
+  (define button-panel (new horizontal-panel% [parent dialog] [alignment '(right center)]))
+  
+  (new button%
+       [parent button-panel]
+       [label "Show Details"]
+       [callback (λ (b e)
+                   (define sel (send list-box get-selection))
+                   (when sel
+                     (define text (send list-box get-string sel))
+                     (define slug (first (string-split text " - ")))
+                     (with-handlers ([exn:fail?
+                                      (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
+                       (define content (workflow-get slug))
+                       (if (equal? content "null")
+                           (message-box "Not Found" (format "Workflow '~a' not found." slug) dialog '(ok))
+                           (show-workflow-details-dialog slug content)))))])
+  
+  (new button%
+       [parent button-panel]
+       [label "Delete"]
+       [callback (λ (b e)
+                   (define sel (send list-box get-selection))
+                   (when sel
+                     (define text (send list-box get-string sel))
+                     (define slug (first (string-split text " - ")))
+                     (when (eq? 'yes (message-box "Confirm"
+                                                   (format "Delete workflow '~a'?" slug)
+                                                   dialog
+                                                   '(yes-no caution)))
+                       (with-handlers ([exn:fail?
+                                        (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
+                         (workflow-delete slug)
+                         (refresh-workflows!)))))])
+  
+  (new button%
+       [parent button-panel]
+       [label "Refresh"]
+       [callback (λ (b e) (refresh-workflows!))])
+  
+  (new button%
+       [parent button-panel]
+       [label "Close"]
+       [callback (λ (b e) (send dialog show #f))])
+  
+  (send dialog show #t))
+
+(define (show-workflow-details-dialog slug content)
+  (define dialog (new dialog% [label (format "Workflow: ~a" slug)] [parent main-frame] [width 700] [height 500]))
+  (define v-panel (new vertical-panel% [parent dialog] [alignment '(left top)] [spacing 10]))
+  
+  (new message% [parent v-panel] [label (format "Slug: ~a" slug)] [auto-resize #t])
+  
+  (define text-editor (new text%))
+  (send text-editor insert content)
+  (send text-editor lock #t)
+  
+  (define editor-canvas
+    (new editor-canvas%
+         [parent v-panel]
+         [editor text-editor]
+         [style '(no-hscroll auto-vscroll)]
+         [min-height 400]))
+  
+  (define button-panel (new horizontal-panel% [parent dialog] [alignment '(right center)]))
+  (new button%
+       [parent button-panel]
+       [label "Close"]
+       [callback (λ (b e) (send dialog show #f))])
+  
+  (send dialog show #t))
+
+;; ============================================================================
+;; Raco Command Dialog
+;; ============================================================================
+
+(define (show-raco-dialog)
+  (define dialog (new dialog% [label "Run Raco Command"] [parent main-frame] [width 500] [height 200]))
+  (define v-panel (new vertical-panel% [parent dialog] [alignment '(left top)] [spacing 10]))
+  
+  (new message% [parent v-panel] [label "Enter raco command arguments:"])
+  
+  (define cmd-field (new text-field% [parent v-panel] [label "raco "] [min-width 400]))
+  
+  (define output-text (new text%))
+  (define output-canvas
+    (new editor-canvas%
+         [parent v-panel]
+         [editor output-text]
+         [style '(no-hscroll auto-vscroll)]
+         [min-height 100]))
+  
+  (define button-panel (new horizontal-panel% [parent dialog] [alignment '(right center)]))
+  (new button%
+       [parent button-panel]
+       [label "Run"]
+       [callback (λ (b e)
+                   (define args (send cmd-field get-value))
+                   (send output-text lock #f)
+                   (send output-text erase)
+                   (send output-text insert (format "Running: raco ~a\n\n" args))
+                   (with-handlers ([exn:fail?
+                                    (λ (e)
+                                      (send output-text insert (format "Error: ~a\n" (exn-message e))))])
+                     (define result (with-output-to-string
+                                      (λ () (system (format "raco ~a" args)))))
+                     (send output-text insert result))
+                   (send output-text lock #t)
+                   (send output-text scroll-to-position (send output-text last-position)))])
+  
+  (new button%
+       [parent button-panel]
+       [label "Close"]
+       [callback (λ (b e) (send dialog show #f))])
+  
+  (send dialog show #t))
+
+;; ============================================================================
+;; Init Project
+;; ============================================================================
+
+(define (init-project!)
+  (define result (message-box "Initialize Project"
+                              "This will analyze the codebase and create/update agents.md.\n\nContinue?"
+                              main-frame
+                              '(yes-no)))
+  (when (eq? result 'yes)
+    (define init-prompt #<<EOF
+Analyze this codebase and create/update **agents.md** to help future agents work effectively in this repository.
+
+**First**: Check if directory is empty or only contains config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run this command to generate agents.md."
+
+**Goal**: Document what an agent needs to know to work in this codebase - commands, patterns, conventions, gotchas.
+
+**Discovery process**:
+
+1. Check directory contents with `ls`
+2. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
+3. Identify project type from config files and directory structure
+4. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
+5. Read representative source files to understand code patterns
+6. If agents.md exists, read and improve it
+
+**Content to include**:
+
+- Essential commands (build, test, run, deploy, etc.) - whatever is relevant for this project
+- Code organization and structure
+- Naming conventions and style patterns
+- Testing approach and patterns
+- Important gotchas or non-obvious patterns
+- Any project-specific context from existing rule files
+
+**Format**: Clear markdown sections. Use your judgment on structure based on what you find. Aim for completeness over brevity - include everything an agent would need to know.
+
+**Critical**: Only document what you actually observe. Never invent commands, patterns, or conventions. If you can't find something, don't include it.
+EOF
+)
+    ;; Send as a regular message to the agent
+    (send input-text insert init-prompt)
+    (send-user-message!)))
 
 ;; ============================================================================
 ;; About Dialog
@@ -503,13 +1129,25 @@
 
 (define (run-gui!)
   (load-dotenv!)
+  
+  ;; Always create a new session on startup (don't reuse old sessions)
+  ;; Users can explicitly resume sessions via the session chooser
+  (define session-id (generate-session-id))
+  (define session-name (string->symbol (format "session-~a" session-id)))
+  (session-create! session-name 'code #:id session-id)
+  (session-switch! session-name)
+  
   (update-session-label!)
+  (set-box! first-message-sent? #f) ; Reset for new session
+
+  ;; Populate models list (same source as TUI `/models`)
+  (refresh-models!)
   
   ;; Welcome message
   (append-message! 'system "Welcome to Chrysalis Forge!\n\nType your message and press Enter to send.\nUse the toolbar to change models or modes.")
   
-  ;; Load existing history
-  (load-chat-history!)
+  ;; Don't load old history - start fresh each time
+  ;; Users can explicitly resume sessions via the session chooser
   
   (send main-frame show #t))
 

@@ -161,12 +161,27 @@ Chrysalis Forge Commands:
   /help           Show this help
   /model <name>   Switch model
   /mode <mode>    Switch mode (ask, architect, code)
+  /quit           Exit
+
+Sessions (internal):
   /session <id>   Switch session
   /sessions       List sessions
   /clear          Clear current session
+
+Threads (user-facing continuity):
+  /thread list           List threads
+  /thread new <title>    Create new thread
+  /thread switch <id>    Switch to thread
+  /thread continue       Create continuation thread
+  /thread child <title>  Create child thread
+  /thread info           Show current thread info
+  /thread context add <title>   Add context node
+  /thread context list          List context nodes
+
+Other:
   /debug <level>  Set debug level (0, 1, 2)
   /cost           Show session cost
-  /quit           Exit
+  /init           Generate agents.md for project
 
 Special prefixes:
   @file.txt       Include file in context

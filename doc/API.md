@@ -802,6 +802,78 @@ The registry automatically detects providers (OpenAI, Anthropic, OpenRouter, Gro
 
 ---
 
+## Thread Manager and Hierarchical Context
+
+The thread and project system provides a user-facing abstraction over low-level sessions, giving you durable conversation IDs and structured context.
+
+### Core Thread Manager
+
+The `src/core/thread-manager.rkt` module is responsible for mapping user actions into sessions and database records.
+
+High-level responsibilities:
+
+- **Hide sessions** behind stable **threads**
+- **Rotate sessions** transparently while preserving context
+- Maintain **hierarchical context nodes** inside each thread
+- Track **relations between threads** (`continues_from`, `child_of`, `relates_to`)
+
+Key functions (see `src/core/agents.md` for more detailed examples):
+
+- `ensure-thread` — Get or create a thread for a user (optionally scoped to a project)
+- `thread-continue` — Create a follow-up thread that continues an earlier one
+- `thread-spawn-child` — Create a child thread for subtopics or decomposed work
+- `thread-link!` — Create relations between existing threads
+- `get-or-create-session` — Internal helper for attaching sessions to threads
+- `rotate-session!` — Archive old sessions and start a fresh one when needed
+- `thread-chat-prepare` — Main entry point for preparing a chat turn on a thread
+
+Typical usage:
+
+```racket
+(require "src/core/thread-manager.rkt")
+
+;; Prepare for a chat turn on a thread
+(define prep
+  (thread-chat-prepare user-id prompt
+                       #:thread-id thread-id
+                       #:project-id project-id
+                       #:mode "code"
+                       #:context-node-id context-node-id))
+
+;; Use (hash-ref prep 'session_id) when calling the LLM
+;; After responding, check if rotation is needed and finalize:
+;; (when (hash-ref prep 'rotation_needed)
+;;   (thread-chat-finalize! user-id thread-id reason summarize-fn))
+```
+
+### Database Layer: Projects, Threads, Context
+
+The `src/service/db.rkt` module implements storage for projects, threads, relations, and context nodes on top of the schema in `src/service/schema.sql` (migration v2).
+
+Project operations:
+
+- `project-create!` — Create a project with optional org, slug, description, and JSON `settings`
+- `project-find-by-id` — Load a single project (decoding JSON settings into a hash)
+- `project-list-for-user` — List visible projects for a user or organization
+- `project-update!` — Update project name, description, or settings
+
+Thread operations:
+
+- `thread-create!` — Create a thread for a user (optionally linked to org/project)
+- `thread-find-by-id` — Load a thread, including JSON `metadata`
+- `thread-list-for-user` — List threads with optional project/status filters
+- `thread-update!` — Update title, status, summary, or metadata
+- `thread-touch!` — Bump `updated_at` when activity occurs
+
+Relations and context:
+
+- `thread-relation-create!`, `thread-relations-for-thread`, `thread-get-parent`, `thread-get-children`
+- `thread-context-create!`, `thread-context-find-by-id`, `thread-context-list`, `thread-context-tree`, `thread-context-update!`
+
+These functions are used by the HTTP router (`src/service/api-router.rkt`) to implement the `/v1/projects`, `/v1/threads`, and related endpoints documented in `doc/SERVICE.md`.
+
+---
+
 ## Workflow Engine
 
 The `src/core/workflow-engine.rkt` module provides stored workflow templates for common tasks.

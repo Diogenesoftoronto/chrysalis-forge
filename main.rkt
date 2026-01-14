@@ -1,11 +1,12 @@
 #lang racket
-(require racket/cmdline json racket/file racket/list racket/format "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
+(require racket/cmdline json racket/file racket/list racket/format racket/date "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
 
          "src/utils/dotenv.rkt" "src/llm/openai-responses-stream.rkt" "src/llm/openai-client.rkt"
          "src/tools/acp-tools.rkt" "src/core/optimizer-gepa.rkt" "src/stores/trace-store.rkt" "src/tools/rdf-tools.rkt"
          "src/core/process-supervisor.rkt" "src/tools/sandbox-exec.rkt" "src/utils/debug.rkt" "src/llm/pricing-model.rkt"
          "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt"
-         "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt" "src/llm/model-registry.rkt")
+         "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt" "src/llm/model-registry.rkt"
+         "src/stores/thread-store.rkt")
 
 ;; Conditionally require service module (may not exist yet)
 (define service-available?
@@ -84,6 +85,9 @@
 ;; Client mode parameters
 (define client-url-param (make-parameter "http://127.0.0.1:8080"))
 (define client-api-key-param (make-parameter #f))
+
+;; Session management parameters
+(define session-action-param (make-parameter #f)) ; #f = new session, "resume" = resume last, string = resume by ID, "list" = list sessions
 
 (define ACP-MODES
   (list (hash 'id "ask" 'name "Ask" 'description "Read only.")
@@ -305,8 +309,115 @@
           (log-trace! #:task "Turn" #:history msgs #:tool-results res #:final-response "Streamed" #:tokens usage #:cost cost)
           (loop (append msgs (list assistant-msg) res))))))
 
+;; Generate a session title from the first user message using a cheap model
+(define (generate-session-title first-message #:api-key [key #f] #:api-base [base #f])
+  "Generate a concise title for a session based on the first user message"
+  (with-handlers ([exn:fail? (λ (e) 
+                                (log-debug 1 'session "Failed to generate title: ~a" (exn-message e))
+                                #f)])
+    (let* ([api-key-val (or key (getenv "OPENAI_API_KEY"))]
+           [api-base-val (or base (base-url-param))])
+      (if (not api-key-val)
+          #f
+          (let* ([cheap-model (or (getenv "TITLE_MODEL") "gpt-4o-mini")]
+                 [sender (make-openai-sender #:model cheap-model #:api-key api-key-val #:api-base api-base-val)]
+                 [prompt (format "Generate a concise, descriptive title (3-8 words) for this conversation based on the user's first message. Return only the title, no quotes or explanation.\n\nUser message: ~a" 
+                                 (if (> (string-length first-message) 200)
+                                     (string-append (substring first-message 0 200) "...")
+                                     first-message))])
+            (define-values (ok? title-text usage)
+              (sender prompt))
+            (if (and ok? title-text)
+                (let ([clean-title (string-trim title-text)])
+                  ;; Remove quotes if present
+                  (if (and (> (string-length clean-title) 2)
+                           (equal? (substring clean-title 0 1) "\"")
+                           (equal? (substring clean-title (sub1 (string-length clean-title))) "\""))
+                      (substring clean-title 1 (sub1 (string-length clean-title)))
+                      clean-title))
+                #f))))))
+
 (define (handle-new-session sid mode)
   (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [mode (string->symbol mode)]))))))
+
+;; Create a new session with auto-generated ID
+(define (create-new-session! [mode "code"])
+  "Create a new session and return its ID"
+  (define session-id (generate-session-id))
+  (define session-name (string->symbol (format "session-~a" session-id)))
+  (session-create! session-name (string->symbol mode) #:id session-id)
+  (session-switch! session-name)
+  session-id)
+
+;; Resume last session or create new if none exists
+(define (resume-last-session!)
+  "Resume the last session, or create a new one if none exists"
+  (define last-id (session-get-last))
+  (if last-id
+      (begin
+        (session-resume-by-id last-id)
+        last-id)
+      (create-new-session!)))
+
+;; Resume session by ID
+(define (resume-session-by-id! session-id)
+  "Resume a session by its ID"
+  (define resumed-name (session-resume-by-id session-id))
+  (if resumed-name
+      session-id
+      (error (format "Session not found: ~a" session-id))))
+
+;; List sessions with metadata
+(define (list-sessions!)
+  "List all sessions with their metadata"
+  (define sessions (session-list-with-metadata))
+  (if (null? sessions)
+      (printf "No sessions found.\n")
+      (begin
+        (printf "\nSessions:\n")
+        (printf "~a\n" (make-string 80 #\-))
+        (for ([s sessions])
+          (define id (hash-ref s 'id))
+          (define title (hash-ref s 'title))
+          (define created (hash-ref s 'created_at))
+          (define is-active (hash-ref s 'is_active))
+          (define created-str (if created
+                                  (date->string (seconds->date created) #t)
+                                  "Unknown"))
+          (printf "~a ~a\n" (if is-active "*" " ") id)
+          (when title
+            (printf "    Title: ~a\n" title))
+          (printf "    Created: ~a\n" created-str)
+          (printf "\n"))
+        (printf "Use 'chrysalis --session resume' to resume the last session.\n")
+        (printf "Use 'chrysalis --session <id>' to resume a specific session.\n"))))
+
+;; List threads with metadata
+(define (list-threads!)
+  "List all local threads"
+  (define threads (local-thread-list))
+  (define active (local-thread-get-active))
+  (if (null? threads)
+      (printf "No threads found. Use '/thread new <title>' to create one.\n")
+      (begin
+        (printf "\nThreads:\n")
+        (printf "~a\n" (make-string 80 #\-))
+        (for ([t threads])
+          (define id (hash-ref t 'id))
+          (define title (hash-ref t 'title))
+          (define status (hash-ref t 'status))
+          (define updated (hash-ref t 'updated_at))
+          (define is-active (equal? id active))
+          (define updated-str (if updated
+                                  (date->string (seconds->date updated) #t)
+                                  "Unknown"))
+          (printf "~a ~a\n" (if is-active "*" " ") id)
+          (when title
+            (printf "    Title: ~a\n" title))
+          (printf "    Status: ~a | Updated: ~a\n" status updated-str)
+          (printf "\n"))
+        (printf "Use '/thread switch <id>' to switch threads.\n")
+        (printf "Use '/thread continue' to create a continuation thread.\n"))))
 
 
 (require racket/system)
@@ -478,10 +589,7 @@
        (if (>= (length parts) 1)
            (match (first parts)
              ["list"
-              (define-values (sessions active) (session-list))
-              (printf "Sessions:\n")
-              (for ([s sessions])
-                (printf "  ~a~a\n" (if (equal? s active) "* " "- ") s))]
+              (list-sessions!)]
              ["new"
               (if (= (length parts) 2)
                   (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
@@ -503,6 +611,104 @@
                   (displayln "Usage: /session delete <name>"))]
              [_ (displayln "Unknown session command. Try list, new, switch, delete.")])
            (displayln "Usage: /session <list|new|switch|delete> ..."))]
+
+      ["thread"
+       (define rest (if (>= (string-length input) 8)
+                        (string-trim (substring input 8))
+                        ""))
+       (define parts (if (> (string-length rest) 0)
+                         (string-split rest)
+                         '()))
+       (if (>= (length parts) 1)
+           (match (first parts)
+             ["list"
+              (list-threads!)]
+             ["new"
+              (define title (if (>= (length parts) 2)
+                                (string-join (cdr parts) " ")
+                                #f))
+              (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
+                (define id (local-thread-create! (or title "Untitled")))
+                (local-thread-switch! id)
+                (printf "Created and switched to thread: ~a\n" id))]
+             ["switch"
+              (if (>= (length parts) 2)
+                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
+                    (local-thread-switch! (second parts))
+                    (printf "Switched to thread: ~a\n" (second parts)))
+                  (displayln "Usage: /thread switch <id>"))]
+             ["continue"
+              (define current (local-thread-get-active))
+              (if current
+                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
+                    (define title (if (>= (length parts) 2)
+                                      (string-join (cdr parts) " ")
+                                      #f))
+                    (define new-id (local-thread-continue! current #:title title))
+                    (local-thread-switch! new-id)
+                    (printf "Created continuation thread: ~a\n" new-id))
+                  (displayln "No active thread to continue from."))]
+             ["child"
+              (define current (local-thread-get-active))
+              (if (and current (>= (length parts) 2))
+                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
+                    (define title (string-join (cdr parts) " "))
+                    (define new-id (local-thread-spawn-child! current title))
+                    (local-thread-switch! new-id)
+                    (printf "Created child thread: ~a\n" new-id))
+                  (displayln "Usage: /thread child <title> (requires active thread)"))]
+             ["info"
+              (define current (local-thread-get-active))
+              (if current
+                  (let* ([thread (local-thread-find current)]
+                         [rels (if thread (local-thread-get-relations current) '())]
+                         [contexts (if thread (local-context-list current) '())])
+                    (if thread
+                        (begin
+                          (printf "\nThread: ~a\n" (hash-ref thread 'id))
+                          (printf "Title: ~a\n" (or (hash-ref thread 'title) "Untitled"))
+                          (printf "Status: ~a\n" (hash-ref thread 'status))
+                          (printf "Created: ~a\n" (date->string (seconds->date (hash-ref thread 'created_at)) #t))
+                          (when (hash-ref thread 'summary #f)
+                            (printf "Summary: ~a\n" (hash-ref thread 'summary)))
+                          (unless (null? rels)
+                            (printf "\nRelations:\n")
+                            (for ([r rels])
+                              (printf "  ~a -> ~a (~a)\n" 
+                                      (hash-ref r 'from) 
+                                      (hash-ref r 'to) 
+                                      (hash-ref r 'type))))
+                          (unless (null? contexts)
+                            (printf "\nContext Nodes:\n")
+                            (for ([c contexts])
+                              (printf "  [~a] ~a\n" (hash-ref c 'kind) (hash-ref c 'title)))))
+                        (displayln "Thread not found.")))
+                  (displayln "No active thread."))]
+             ["context"
+              (define current (local-thread-get-active))
+              (if (and current (>= (length parts) 2))
+                  (let* ([sub-cmd (second parts)]
+                         [rest-parts (if (>= (length parts) 3) (cddr parts) '())])
+                    (match sub-cmd
+                      ["add"
+                       (if (>= (length rest-parts) 1)
+                           (let* ([title (string-join rest-parts " ")]
+                                  [id (local-context-create! current title)])
+                             (printf "Created context node: ~a\n" id))
+                           (displayln "Usage: /thread context add <title>"))]
+                      ["list"
+                       (let ([contexts (local-context-list current)])
+                         (if (null? contexts)
+                             (displayln "No context nodes.")
+                             (for ([c contexts])
+                               (printf "  [~a] ~a: ~a\n" 
+                                       (hash-ref c 'kind) 
+                                       (hash-ref c 'id)
+                                       (hash-ref c 'title)))))]
+                      [_ (displayln "Usage: /thread context <add|list> ...")]))
+                  (displayln "Usage: /thread context <add|list> ... (requires active thread)"))]
+             [_ (displayln "Unknown thread command. Try: list, new, switch, continue, child, info, context")])
+           (displayln "Usage: /thread <list|new|switch|continue|child|info|context> ..."))]
 
       [(or "attach" "file")
        (define start-idx (if (string-prefix? input "/attach") 8 6))
@@ -718,10 +924,31 @@ EOF
 (define (repl-loop)
   (check-env-verbose!)
   (verify-env! #:fail #f)
+  
+  ;; Handle session resumption or creation
+  (define session-action (session-action-param))
+  (cond
+    [(equal? session-action "list")
+     (list-sessions!)
+     (exit 0)]
+    [(equal? session-action "resume")
+     (define resumed-id (resume-last-session!))
+     (printf "Resumed session: ~a\n" resumed-id)]
+    [(and session-action (not (equal? session-action "")))
+     (resume-session-by-id! session-action)
+     (printf "Resumed session: ~a\n" session-action)]
+    [else
+     ;; Create new session
+     (define new-id (create-new-session!))
+     (printf "Started new session: ~a\n" new-id)])
+  
   (display-figlet-banner "chrysalis forge" "standard")
   (newline)
   (displayln "Type /exit to leave or /help for commands.")
   (handle-new-session "cli" "code")
+  
+  ;; Track if this is the first user message for title generation
+  (define first-message? (box #t))
 
   (define last-break-time 0)
 
@@ -760,6 +987,15 @@ EOF
             (with-handlers ([exn:fail? (λ (e)
                                          (eprintf "\n[ERROR] ~a\n" (exn-message e))
                                          (eprintf "The REPL will continue. Use /models to list available models.\n"))])
+              ;; Generate title after first user message
+              (when (unbox first-message?)
+                (set-box! first-message? #f)
+                (define db (load-ctx))
+                (define active-name (hash-ref db 'active))
+                (define title (generate-session-title input))
+                (when title
+                  (session-update-title! active-name title)
+                  (log-debug 1 'session "Generated session title: ~a" title)))
               (acp-run-turn "cli" input (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f)))])
          (loop)]))))
 
@@ -797,6 +1033,9 @@ EOF
               [("--client") "Connect to a running Chrysalis service" (mode-param 'client)]
               [("--url") url "Service URL to connect to (default: http://127.0.0.1:8080)" (client-url-param url)]
               [("--api-key") key "API key or token for authentication" (client-api-key-param key)]
+              ;; Session management options
+              [("--session") action "Session action: 'resume' (resume last), '<id>' (resume by ID), 'list' (list sessions)" 
+                           (session-action-param action)]
               #:args raw-args
               (match (mode-param)
                 ['gui

@@ -304,6 +304,39 @@ The API router (`src/service/api-router.rkt`) provides RESTful endpoints with Op
 | POST | `/v1/sessions` | Create session |
 | GET | `/v1/sessions/:id` | Get session |
 
+These session endpoints are primarily **internal plumbing**. End-user and client applications should prefer the higher-level **thread** and **project** APIs described below—sessions are rotated automatically behind the scenes.
+
+### Thread Endpoints (User-Facing)
+
+Threads provide conversation continuity across rotated sessions. A thread can be linked to a project and organized into a hierarchy of related threads and context nodes.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/threads` | List threads for the authenticated user (optionally filtered by project or status) |
+| POST | `/v1/threads` | Create a new thread (optionally as a child or continuation of another) |
+| GET | `/v1/threads/:id` | Get thread details plus relations and context tree |
+| PATCH | `/v1/threads/:id` | Update thread title, status, or summary |
+| POST | `/v1/threads/:id/messages` | Post a chat message on a thread (LLM integration pending in the router) |
+| POST | `/v1/threads/:id/relations` | Create a relation to another thread (`continues_from`, `child_of`, `relates_to`) |
+| GET | `/v1/threads/:id/contexts` | Fetch the hierarchical context nodes for a thread |
+| POST | `/v1/threads/:id/contexts` | Add a context node to a thread |
+
+#### Thread Relations
+
+- **`continues_from`** — Linear continuation from an earlier thread  
+- **`child_of`** — Hierarchical child thread for subtopics or decomposed work  
+- **`relates_to`** — Loose association without strict hierarchy
+
+### Project Endpoints
+
+Projects act as workspaces that group related threads. A project can capture configuration, repository metadata, or other settings in a JSON `settings` field.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/projects` | List projects for the authenticated user (or organization) |
+| POST | `/v1/projects` | Create a new project |
+| GET | `/v1/projects/:id` | Get project details, including associated threads |
+
 ### OpenAI-Compatible Endpoints
 
 | Method | Path | Description |

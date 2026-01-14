@@ -77,3 +77,63 @@ Parallel task execution with focused tool profiles.
 (define task-id (spawn-sub-agent! "Fix the bug in auth.rkt" run-fn #:profile 'editor))
 (define result (await-sub-agent! task-id))
 ```
+
+## Thread Manager
+
+Provides user-facing thread abstraction, hiding session implementation details.
+
+### Hierarchy
+
+```
+Project → Thread → Context Nodes
+                 ↓ (hidden)
+              Sessions
+```
+
+### Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `ensure-thread` | Get or create a thread |
+| `thread-continue` | Create thread that continues from another |
+| `thread-spawn-child` | Create child thread for subtopics |
+| `thread-link!` | Create relations between threads |
+| `get-or-create-session` | Get active session (internal) |
+| `rotate-session!` | Rotate to fresh session preserving continuity |
+| `thread-chat-prepare` | Entry point for chat turns |
+
+### Thread Relations
+
+- `continues_from` - Linear continuation
+- `child_of` - Hierarchical breakdown
+- `relates_to` - Loose association
+
+### Usage
+
+```racket
+(require "thread-manager.rkt")
+
+;; Prepare for a chat turn
+(define prep (thread-chat-prepare user-id prompt
+                                  #:project-id project-id
+                                  #:mode "code"))
+
+;; Use (hash-ref prep 'session_id) for LLM calls
+;; After turn, check rotation:
+(when (hash-ref prep 'rotation_needed)
+  (thread-chat-finalize! user-id thread-id reason summary-fn))
+```
+
+### Context Nodes
+
+Hierarchical breakdown within a thread:
+
+```racket
+(thread-add-context! thread-id "Database Layer"
+                     #:kind "area"
+                     #:body "Handle all DB migrations")
+
+(thread-add-context! thread-id "Add users table"
+                     #:parent-id area-id
+                     #:kind "task")
+```
