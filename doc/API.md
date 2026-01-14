@@ -851,4 +851,4 @@ The engine includes built-in workflows:
 
 ### Storage
 
-Workflows are persisted in `~/.agentd/graph.db` in the `workflows` table.
+Workflows are persisted in `~/.chrysalis/graph.db` in the `workflows` table.

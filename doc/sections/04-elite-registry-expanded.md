@@ -188,7 +188,7 @@ agent_id = sha256('{"demos_hash":"sha256:def456","module":"ChainOfThought",...}'
 
 **Direct Trust (Phase 1-2)**
 
-- User maintains list of trusted DIDs in `~/.agentd/trusted-dids.json`
+- User maintains list of trusted DIDs in `~/.chrysalis/trusted-dids.json`
 - Only import manifests signed by trusted DIDs
 
 **Web of Trust (Phase 3+)**
@@ -235,7 +235,7 @@ evals.jsonl
 └─────────────────────┘
     │
     ▼
-~/.agentd/elite/*.json
+~/.chrysalis/elite/*.json
 ```
 
 ### Existing eval-store.rkt Functions Used

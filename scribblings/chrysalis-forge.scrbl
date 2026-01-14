@@ -29,7 +29,7 @@ raco pkg install
 
 This installs two CLI commands:
 @itemlist[
-  @item{@tt{agentd} --- Full agent with all tools and modes}
+  @item{@tt{chrysalis} --- Full agent with all tools and modes}
   @item{@tt{chrysalis-client} --- Lightweight client for remote services}
 ]
 
@@ -52,13 +52,13 @@ See @filepath{.env.example} for all available options.
 Start an interactive session:
 
 @verbatim|{
-agentd -i
+chrysalis -i
 }|
 
 Or run a single task:
 
 @verbatim|{
-agentd "Create a function that calculates fibonacci numbers"
+chrysalis "Create a function that calculates fibonacci numbers"
 }|
 
 @subsection{Service Mode}
@@ -66,7 +66,7 @@ agentd "Create a function that calculates fibonacci numbers"
 Run as an HTTP service:
 
 @verbatim|{
-agentd --serve --serve-port 8080
+chrysalis --serve --serve-port 8080
 }|
 
 Then connect with the client:
@@ -80,18 +80,18 @@ chrysalis-client --url http://localhost:8080
 For IDE integration (Amp Code, Zed, etc.):
 
 @verbatim|{
-agentd --acp
+chrysalis --acp
 }|
 
 @; ============================================================================
 @section[#:tag "cli"]{Command-Line Interface}
 
-@subsection{agentd}
+@subsection{chrysalis}
 
 The main agent CLI with full capabilities.
 
 @verbatim|{
-Usage: agentd [options] [task]
+Usage: chrysalis [options] [task]
 
 Options:
   --acp              Run ACP Server for IDE integration
@@ -184,13 +184,13 @@ Run Chrysalis as a multi-user HTTP service.
 
 @verbatim|{
 # Development
-agentd --serve
+chrysalis --serve
 
 # Production daemon
-agentd --serve --daemonize
+chrysalis --serve --daemonize
 
 # Custom config
-agentd --serve --config /path/to/chrysalis.toml
+chrysalis --serve --config /path/to/chrysalis.toml
 }|
 
 @subsection{API Endpoints}

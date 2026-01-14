@@ -15,4 +15,4 @@ When working with state or memory, use these modules to maintain persistence.
    - Use `rdf-store.rkt` for structured fact retrieval.
 
 ## Data Locations
-All stores persist to the `~/.agentd/` directory (e.g., `~/.agentd/evals.jsonl`, `~/.agentd/context.json`).
+All stores persist to the `~/.chrysalis/` directory (e.g., `~/.chrysalis/evals.jsonl`, `~/.chrysalis/context.json`).

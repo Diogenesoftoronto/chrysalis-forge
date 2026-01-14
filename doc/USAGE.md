@@ -18,7 +18,7 @@ cd chrysalis-forge
 raco pkg install --auto
 ```
 
-This registers two commands: `agentd` (the full agent) and `chrysalis-client` (a lightweight client for connecting to remote agent services). The installation process pulls in all Racket dependencies automatically.
+This registers two commands: `chrysalis` (the full agent) and `chrysalis-client` (a lightweight client for connecting to remote agent services). The installation process pulls in all Racket dependencies automatically.
 
 ### Configuration
 
@@ -77,7 +77,7 @@ Use `/config list` to see all current settings, and `/models` to discover availa
 The most common way to use Chrysalis Forge is interactive mode, which drops you into a REPL where you can have a conversation with the agent:
 
 ```bash
-agentd -i
+chrysalis -i
 ```
 
 Once inside, you can type natural language requests. The agent reads your input, reasons about it, calls tools as needed, and responds. A typical session might look like:
@@ -121,20 +121,20 @@ Several commands are available within the REPL (all start with `/`):
 For scripting or quick tasks, pass the prompt directly on the command line:
 
 ```bash
-agentd "Explain what this codebase does"
+chrysalis "Explain what this codebase does"
 ```
 
 The agent runs, produces output, and exits. This is useful for automation or when you just need a quick answer. Combine with flags to control behavior:
 
 ```bash
 # Allow file modifications (security level 2)
-agentd --perms 2 "Fix the type error in parser.rkt"
+chrysalis --perms 2 "Fix the type error in parser.rkt"
 
 # Use a specific model with speed priority
-agentd --model gpt-5.2 --priority fast "Summarize the README"
+chrysalis --model gpt-5.2 --priority fast "Summarize the README"
 
 # Set a budget cap
-agentd --budget 0.50 "Deep analysis of the codebase architecture"
+chrysalis --budget 0.50 "Deep analysis of the codebase architecture"
 ```
 
 ### Service Mode
@@ -142,7 +142,7 @@ agentd --budget 0.50 "Deep analysis of the codebase architecture"
 For multi-user deployments or remote access, run Chrysalis Forge as an HTTP service:
 
 ```bash
-agentd --serve --serve-port 8080
+chrysalis --serve --serve-port 8080
 ```
 
 This exposes an OpenAI-compatible API at `/v1/chat/completions`, meaning existing tools that speak the OpenAI protocol can connect directly. The service also provides endpoints for user management (`/auth/register`, `/auth/login`) and session tracking (`/v1/sessions`).
@@ -158,7 +158,7 @@ chrysalis-client --url http://localhost:8080 --api-key your-jwt-token
 For integration with editors like Amp Code or Zed, use ACP mode:
 
 ```bash
-agentd --acp
+chrysalis --acp
 ```
 
 This starts a JSON-RPC server on stdio, enabling bidirectional communication with the IDE. The editor can send prompts, and the agent can request file reads, display diffs, and interact with the IDE's UI.
@@ -200,14 +200,14 @@ Security levels add another dimension of control, governing *how* dangerous oper
 Set the security level with `--perms`:
 
 ```bash
-agentd --perms 2 "Refactor the parser module"
+chrysalis --perms 2 "Refactor the parser module"
 ```
 
 For additional safety, you can enable an LLM-based security judge that reviews operations before execution:
 
 ```bash
 export LLM_JUDGE=true
-agentd --perms 3 "Run the test suite"
+chrysalis --perms 3 "Run the test suite"
 ```
 
 The judge receives the proposed operation and responds with [SAFE] or [UNSAFE]. It's not foolproof, but it catches obvious problems.
@@ -290,9 +290,9 @@ One of the distinctive features of Chrysalis Forge is priority-aware execution. 
 The simplest approach uses keywords:
 
 ```bash
-agentd --priority fast "Quick status check"
-agentd --priority cheap "Batch analysis"
-agentd --priority accurate "Critical code review"
+chrysalis --priority fast "Quick status check"
+chrysalis --priority cheap "Batch analysis"
+chrysalis --priority accurate "Critical code review"
 ```
 
 Each keyword maps to a target in phenotype space. "Fast" prioritizes low latency, accepting potentially lower accuracy. "Cheap" minimizes token cost. "Accurate" (or "best") prioritizes correctness regardless of time or cost.
@@ -302,8 +302,8 @@ Each keyword maps to a target in phenotype space. "Fast" prioritizes low latency
 For more nuanced preferences, use natural language:
 
 ```bash
-agentd --priority "I need accuracy but I'm on a budget" "Review this security code"
-agentd --priority "Balance speed and quality" "Generate tests"
+chrysalis --priority "I need accuracy but I'm on a budget" "Review this security code"
+chrysalis --priority "Balance speed and quality" "Generate tests"
 ```
 
 The system interprets this description and finds the module variant in its archive that best matches your stated preferences. Under the hood, it uses KNN search in a normalized phenotype space.
@@ -318,7 +318,7 @@ The agent can change its own priority mid-task using the `set_priority` tool. If
 
 ### Rules Files
 
-Every project is different. Chrysalis Forge supports project-specific configuration through `.agentd/rules.md` files. Place this file in your project root, and its contents are automatically appended to the agent's system prompt.
+Every project is different. Chrysalis Forge supports project-specific configuration through `.chrysalis/rules.md` files. Place this file in your project root, and its contents are automatically appended to the agent's system prompt.
 
 A typical rules file might contain:
 
@@ -433,13 +433,13 @@ Chrysalis Forge works with any OpenAI-compatible API. For local models:
 
 ```bash
 # With Ollama
-agentd --base-url http://localhost:11434/v1 --model llama3.2 -i
+chrysalis --base-url http://localhost:11434/v1 --model llama3.2 -i
 
 # With LiteLLM
-OPENAI_API_BASE=http://localhost:4000/v1 agentd -i
+OPENAI_API_BASE=http://localhost:4000/v1 chrysalis -i
 
 # With vLLM
-agentd --base-url http://localhost:8000/v1 --model mistral-7b-instruct -i
+chrysalis --base-url http://localhost:8000/v1 --model mistral-7b-instruct -i
 ```
 
 ### Budget and Timeout Control
@@ -448,10 +448,10 @@ For production use, set limits:
 
 ```bash
 # Stop after spending $2
-agentd --budget 2.00 "Deep codebase analysis"
+chrysalis --budget 2.00 "Deep codebase analysis"
 
 # Stop after 10 minutes
-agentd --timeout 10m "Comprehensive test generation"
+chrysalis --timeout 10m "Comprehensive test generation"
 ```
 
 The agent respects these limits, wrapping up gracefully when approaching them.
@@ -502,7 +502,7 @@ This helps diagnose configuration issues quickly.
 
 ### Log Locations
 
-Persistent logs live in `~/.agentd/`:
+Persistent logs live in `~/.chrysalis/`:
 
 - `traces.jsonl` — Full operation traces
 - `evals.jsonl` — Task outcome evaluations  

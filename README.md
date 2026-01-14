@@ -117,7 +117,7 @@ chrysalis --perms 1 "Analyze this code"
 - `--timeout <duration>`: Session time limit
 
 ### Project Rules
-Create `.agentd/rules.md` in your project root to add project-specific instructions to the agent's system prompt.
+Create `.chrysalis/rules.md` in your project root to add project-specific instructions to the agent's system prompt.
 
 ## Security Levels
 

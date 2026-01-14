@@ -26,7 +26,7 @@ Agents operate within a `Ctx` (Context):
   - **`code`**: Full capabilities including write, network, services
   - **`semantic`**: RDF Knowledge Graph mode
 
-**Project Rules**: `.agentd/rules.md` in the working directory is automatically appended to the system prompt.
+**Project Rules**: `.chrysalis/rules.md` in the working directory is automatically appended to the system prompt.
 
 ### 4. Tool System (`src/tools/acp-tools.rkt`)
 

@@ -87,7 +87,7 @@ We use the W3C DID standard with the `did:key` method:
 
 - **Ed25519 keypairs** - Same as Radicle and Nostr use
 - **No blockchain required** - Self-contained, purely local
-- **Keys stored at** `~/.agentd/identity.json`
+- **Keys stored at** `~/.chrysalis/identity.json`
 
 ### 3.2 Why DIDs Over Blockchain Wallets
 
@@ -125,7 +125,7 @@ We use the W3C DID standard with the `did:key` method:
 #### 3.4.1 File Structure
 
 ```
-~/.agentd/
+~/.chrysalis/
   identity.json          # Node DID + keypair
   identity.json.backup   # Encrypted backup
   elite/
@@ -207,7 +207,7 @@ The multicodec prefix `0xed01` is a varint encoding:
 (define current-identity (make-parameter #f))
 
 ;; Load existing or create new identity
-(define (load-or-create-identity [path "~/.agentd/identity.json"])
+(define (load-or-create-identity [path "~/.chrysalis/identity.json"])
   (define expanded (expand-user-path path))
   (if (file-exists? expanded)
       (with-input-from-file expanded
@@ -272,7 +272,7 @@ Radicle uses the same Ed25519 keys, enabling direct interop:
 
 ```bash
 # Import Chrysalis key to Radicle
-rad auth --alias "chrysalis" --key ~/.agentd/identity.json
+rad auth --alias "chrysalis" --key ~/.chrysalis/identity.json
 
 # Export Radicle key to Chrysalis format
 cf-identity --import-radicle ~/.radicle/keys/radicle.key
@@ -309,16 +309,16 @@ Nostr uses Ed25519 but with bech32 encoding:
 
 ```bash
 # Encrypt identity.json with passphrase
-age -p ~/.agentd/identity.json > ~/.agentd/identity.json.backup
+age -p ~/.chrysalis/identity.json > ~/.chrysalis/identity.json.backup
 # or
-gpg -c ~/.agentd/identity.json
+gpg -c ~/.chrysalis/identity.json
 ```
 
 **Recovery:**
 
 ```bash
 # Decrypt backup
-age -d ~/.agentd/identity.json.backup > ~/.agentd/identity.json
+age -d ~/.chrysalis/identity.json.backup > ~/.chrysalis/identity.json
 
 # Verify integrity
 cf-identity --verify
@@ -427,7 +427,7 @@ Links to existing Chrysalis Forge modules:
 
 New module: `src/stores/elite-registry.rkt`
 - `(update-elite-registry!)` - Generate manifests from eval data
-- `(generate-agent-manifests)` - Export to `~/.agentd/elite/`
+- `(generate-agent-manifests)` - Export to `~/.chrysalis/elite/`
 
 ### 4.4 Privacy Considerations
 
@@ -561,7 +561,7 @@ agent_id = sha256('{"demos_hash":"sha256:def456","module":"ChainOfThought",...}'
 #### Trust Model
 
 **Direct Trust (Phase 1-2)**
-- User maintains list of trusted DIDs in `~/.agentd/trusted-dids.json`
+- User maintains list of trusted DIDs in `~/.chrysalis/trusted-dids.json`
 - Only import manifests signed by trusted DIDs
 
 **Web of Trust (Phase 3+)**
@@ -602,7 +602,7 @@ evals.jsonl
 └─────────────────────┘
     │
     ▼
-~/.agentd/elite/*.json
+~/.chrysalis/elite/*.json
 ```
 
 #### New elite-registry.rkt Functions

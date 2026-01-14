@@ -79,7 +79,7 @@ Over time, the system learns that "researcher" profiles excel at code exploratio
 
 ### Trace Store
 
-The trace store (`src/stores/trace-store.rkt`) logs every operation to `~/.agentd/traces.jsonl`. Each entry captures:
+The trace store (`src/stores/trace-store.rkt`) logs every operation to `~/.chrysalis/traces.jsonl`. Each entry captures:
 
 - Timestamp
 - Operation type (tool call, LLM invocation, decomposition step)

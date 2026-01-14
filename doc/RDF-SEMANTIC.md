@@ -49,7 +49,7 @@ The vector store (`src/stores/vector-store.rkt`) provides semantic similarity se
 
 ### Storage
 
-Vectors persist to `~/.agentd/vectors.json` as a hash mapping IDs to `{text, vec}` pairs.
+Vectors persist to `~/.chrysalis/vectors.json` as a hash mapping IDs to `{text, vec}` pairs.
 
 ### Use Cases
 
@@ -138,7 +138,7 @@ Patterns use `?` prefix for variables:
 
 ### Storage
 
-The RDF store persists to `~/.agentd/graph.db` (SQLite).
+The RDF store persists to `~/.chrysalis/graph.db` (SQLite).
 
 ---
 
@@ -304,5 +304,5 @@ This hybrid approach gives you:
 
 | Store | Path | Format |
 |-------|------|--------|
-| Vector Store | `~/.agentd/vectors.json` | JSON hash |
-| RDF Store | `~/.agentd/graph.db` | SQLite |
+| Vector Store | `~/.chrysalis/vectors.json` | JSON hash |
+| RDF Store | `~/.chrysalis/graph.db` | SQLite |

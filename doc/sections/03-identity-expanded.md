@@ -3,7 +3,7 @@
 ### 3.4.1 File Structure
 
 ```
-~/.agentd/
+~/.chrysalis/
   identity.json          # Node DID + keypair
   identity.json.backup   # Encrypted backup
   elite/
@@ -85,7 +85,7 @@ The multicodec prefix `0xed01` is a varint encoding:
 (define current-identity (make-parameter #f))
 
 ;; Load existing or create new identity
-(define (load-or-create-identity [path "~/.agentd/identity.json"])
+(define (load-or-create-identity [path "~/.chrysalis/identity.json"])
   (define expanded (expand-user-path path))
   (if (file-exists? expanded)
       (with-input-from-file expanded
@@ -150,7 +150,7 @@ Radicle uses the same Ed25519 keys, enabling direct interop:
 
 - **Import Chrysalis key to Radicle:**
   ```bash
-  rad auth --alias "chrysalis" --key ~/.agentd/identity.json
+  rad auth --alias "chrysalis" --key ~/.chrysalis/identity.json
   ```
 
 - **Export Radicle key to Chrysalis format:**
@@ -193,9 +193,9 @@ Conversion functions:
 
 1. **Encrypt identity.json with passphrase:**
    ```bash
-   age -p ~/.agentd/identity.json > ~/.agentd/identity.json.backup
+   age -p ~/.chrysalis/identity.json > ~/.chrysalis/identity.json.backup
    # or
-   gpg -c ~/.agentd/identity.json
+   gpg -c ~/.chrysalis/identity.json
    ```
 
 2. **Store in secure location** (password manager, offline storage)
@@ -206,7 +206,7 @@ Conversion functions:
 
 1. **Decrypt backup:**
    ```bash
-   age -d ~/.agentd/identity.json.backup > ~/.agentd/identity.json
+   age -d ~/.chrysalis/identity.json.backup > ~/.chrysalis/identity.json
    ```
 
 2. **Verify integrity:**

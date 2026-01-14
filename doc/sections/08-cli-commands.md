@@ -35,7 +35,7 @@ cf-identity init [--alias NAME]
 ```bash
 cf-identity init --alias "my-dev-node"
 # Created identity: did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK
-# Saved to: ~/.agentd/identity.json
+# Saved to: ~/.chrysalis/identity.json
 ```
 
 **Exit Codes:**
@@ -123,7 +123,7 @@ cf-identity import --radicle PATH
 ```bash
 cf-identity import --radicle ~/.radicle/keys/radicle.key
 # Imported identity: did:key:z6Mk...
-# Saved to: ~/.agentd/identity.json
+# Saved to: ~/.chrysalis/identity.json
 ```
 
 **Exit Codes:**
@@ -149,7 +149,7 @@ cf-identity rotate
 
 1. Generates a new Ed25519 keypair
 2. Creates a signed rotation statement linking old DID → new DID
-3. Saves rotation proof to `~/.agentd/rotations/<timestamp>.json`
+3. Saves rotation proof to `~/.chrysalis/rotations/<timestamp>.json`
 4. Updates `identity.json` with new keypair
 
 **Example:**
@@ -159,7 +159,7 @@ cf-identity rotate
 # ⚠ WARNING: This will rotate your identity key.
 # Old DID: did:key:z6MkOLD...
 # New DID: did:key:z6MkNEW...
-# Rotation proof saved to: ~/.agentd/rotations/1704067200.json
+# Rotation proof saved to: ~/.chrysalis/rotations/1704067200.json
 # Proceed? [y/N]: y
 # Identity rotated successfully.
 ```
@@ -219,7 +219,7 @@ cf-identity backup --encrypt
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--encrypt` | flag | false | Encrypt backup with passphrase (uses `age`) |
-| `--output` | path | `~/.agentd/identity.json.backup` | Output path |
+| `--output` | path | `~/.chrysalis/identity.json.backup` | Output path |
 
 **Example:**
 
@@ -227,7 +227,7 @@ cf-identity backup --encrypt
 cf-identity backup --encrypt
 # Enter passphrase: ********
 # Confirm passphrase: ********
-# Backup saved to: ~/.agentd/identity.json.backup
+# Backup saved to: ~/.chrysalis/identity.json.backup
 ```
 
 **Exit Codes:**
@@ -263,7 +263,7 @@ cf-generate-elites [options]
 
 #### Description
 
-Reads evaluation data from `~/.agentd/evals.jsonl`, identifies agents meeting elite criteria, and generates signed manifests in `~/.agentd/elite/`.
+Reads evaluation data from `~/.chrysalis/evals.jsonl`, identifies agents meeting elite criteria, and generates signed manifests in `~/.chrysalis/elite/`.
 
 #### Example
 
@@ -275,17 +275,17 @@ cf-generate-elites --threshold 0.85 --min-tasks 100 --dry-run
 #   agent:a1b2c3d4 (editor profile)
 #     Success rate: 92.3% (478/518 tasks)
 #     Task types: file-edit, patch
-#     Would generate: ~/.agentd/elite/a1b2c3d4.json
+#     Would generate: ~/.chrysalis/elite/a1b2c3d4.json
 #   
 #   agent:e5f6g7h8 (researcher profile)
 #     Success rate: 87.1% (203/233 tasks)
 #     Task types: search, analysis
-#     Would generate: ~/.agentd/elite/e5f6g7h8.json
+#     Would generate: ~/.chrysalis/elite/e5f6g7h8.json
 # 
 # Dry run complete. 2 manifests would be generated.
 
 cf-generate-elites --force
-# Generated 2 elite manifests in ~/.agentd/elite/
+# Generated 2 elite manifests in ~/.chrysalis/elite/
 ```
 
 #### Exit Codes
@@ -316,7 +316,7 @@ cf-export-elites [options]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--to` | path | `./.agentd-export/` | Output directory for exported manifests |
+| `--to` | path | `./.chrysalis-export/` | Output directory for exported manifests |
 | `--agent-id` | string | all | Export only a specific agent (by ID prefix) |
 | `--include-prompts` | flag | false | Include full system prompt content (opt-in, may contain sensitive info) |
 | `--include-demos` | flag | false | Include few-shot demo examples (opt-in) |
@@ -336,7 +336,7 @@ cf-export-elites --to ./shared-elites/ --include-demos
 
 cf-export-elites --agent-id a1b2 --include-prompts --include-demos
 # Exporting elite agents...
-#   ✓ agent:a1b2c3d4 → ./.agentd-export/a1b2c3d4.json
+#   ✓ agent:a1b2c3d4 → ./.chrysalis-export/a1b2c3d4.json
 # Exported 1 agent (full content included).
 ```
 
@@ -372,7 +372,7 @@ cf-discover-elites [options]
 
 #### Description
 
-Discovers `.agentd/elite/*.json` manifests in a repository. Can scan local directories or clone remote repositories temporarily for scanning.
+Discovers `.chrysalis/elite/*.json` manifests in a repository. Can scan local directories or clone remote repositories temporarily for scanning.
 
 #### Example
 
@@ -458,7 +458,7 @@ cf-import-elite --agent-id a1b2c3d4 --from https://github.com/user/agents
 cf-import-elite --agent-id a1b2c3d4 --from ./shared-elites/ \
   --trust-did did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK
 # ✓ Added DID to trusted list
-# ✓ Imported agent:a1b2c3d4 to ~/.agentd/imported/a1b2c3d4.json
+# ✓ Imported agent:a1b2c3d4 to ~/.chrysalis/imported/a1b2c3d4.json
 ```
 
 #### Exit Codes
@@ -494,7 +494,7 @@ cf-rad-publish [options]
 
 #### Description
 
-Commits elite manifests to the `.agentd/elite/` directory in a Radicle-tracked repository and optionally syncs with the network.
+Commits elite manifests to the `.chrysalis/elite/` directory in a Radicle-tracked repository and optionally syncs with the network.
 
 **Prerequisites:**
 
@@ -509,8 +509,8 @@ cf-rad-publish --sync
 # Detected Radicle project: rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5
 # 
 # Publishing elite manifests...
-#   ✓ Staged .agentd/elite/a1b2c3d4.json
-#   ✓ Staged .agentd/elite/e5f6g7h8.json
+#   ✓ Staged .chrysalis/elite/a1b2c3d4.json
+#   ✓ Staged .chrysalis/elite/e5f6g7h8.json
 # 
 # Creating commit...
 #   ✓ Committed: "chore: update elite manifests"
@@ -573,7 +573,7 @@ cf-rad-clone rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5 --discover
 #   ✓ Cloned to ./chrysalis-community-agents/
 # 
 # Discovering elite agents...
-#   Found 5 elite agents in .agentd/elite/
+#   Found 5 elite agents in .chrysalis/elite/
 #   Run `cf-discover-elites` for details.
 ```
 
@@ -784,8 +784,8 @@ All commands respect these environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AGENTD_HOME` | Base directory for Chrysalis data | `~/.agentd` |
-| `AGENTD_IDENTITY` | Path to identity file | `$AGENTD_HOME/identity.json` |
+| `CHRYSALIS_HOME` | Base directory for Chrysalis data | `~/.chrysalis` |
+| `CHRYSALIS_IDENTITY` | Path to identity file | `$CHRYSALIS_HOME/identity.json` |
 | `CF_RAD_SEED` | Preferred Radicle seed node | auto-discover |
 | `CF_COMPUTE_BACKEND` | Default compute backend | `akash` |
 

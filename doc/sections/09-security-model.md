@@ -19,12 +19,12 @@ This section defines the comprehensive security model for Chrysalis Forge's dece
 
 | Asset | Sensitivity | Location |
 |-------|-------------|----------|
-| **Private Keys** | Critical | `~/.agentd/identity.json` |
-| **Agent Configs** | High | `~/.agentd/elite/*.json`, `.agentd/` project dirs |
-| **Eval Data** | Medium-High | `~/.agentd/evals.jsonl`, `traces.jsonl` |
+| **Private Keys** | Critical | `~/.chrysalis/identity.json` |
+| **Agent Configs** | High | `~/.chrysalis/elite/*.json`, `.chrysalis/` project dirs |
+| **Eval Data** | Medium-High | `~/.chrysalis/evals.jsonl`, `traces.jsonl` |
 | **Model Weights** | Variable | Local cache, external providers |
-| **Trust Lists** | High | `~/.agentd/trusted-dids.json` |
-| **Audit Logs** | Medium | `~/.agentd/audit.jsonl` |
+| **Trust Lists** | High | `~/.chrysalis/trusted-dids.json` |
+| **Audit Logs** | Medium | `~/.chrysalis/audit.jsonl` |
 
 #### 9.1.3 Attack Vectors
 
@@ -61,12 +61,12 @@ Keys are generated using Ed25519 via the `crypto/libcrypto` Racket library:
 
 #### 9.2.2 Key Storage
 
-**Location:** `~/.agentd/identity.json`
+**Location:** `~/.chrysalis/identity.json`
 
 **Permissions:** `0600` (owner read/write only)
 
 ```bash
-chmod 600 ~/.agentd/identity.json
+chmod 600 ~/.chrysalis/identity.json
 ```
 
 **Format:**
@@ -92,16 +92,16 @@ chmod 600 ~/.agentd/identity.json
 
 ```bash
 # Backup with passphrase
-age -p ~/.agentd/identity.json > ~/.agentd/identity.json.age
+age -p ~/.chrysalis/identity.json > ~/.chrysalis/identity.json.age
 
 # Backup with recipient public key
-age -r age1... ~/.agentd/identity.json > ~/.agentd/identity.json.age
+age -r age1... ~/.chrysalis/identity.json > ~/.chrysalis/identity.json.age
 ```
 
 **Alternative with GPG:**
 
 ```bash
-gpg --symmetric --cipher-algo AES256 ~/.agentd/identity.json
+gpg --symmetric --cipher-algo AES256 ~/.chrysalis/identity.json
 ```
 
 **Storage recommendations:**
@@ -151,7 +151,7 @@ gpg --symmetric --cipher-algo AES256 ~/.agentd/identity.json
 2. Create revocation statement signed by old key (if still available)
 3. Broadcast revocation to all known peers
 4. Notify trusted contacts out-of-band
-5. Audit recent activity in `~/.agentd/audit.jsonl`
+5. Audit recent activity in `~/.chrysalis/audit.jsonl`
 
 **Revocation statement:**
 ```json
@@ -237,7 +237,7 @@ To ensure deterministic serialization for signature verification:
 
 #### 9.4.1 Phase 1-2: Direct Trust
 
-**Explicit trust list:** `~/.agentd/trusted-dids.json`
+**Explicit trust list:** `~/.chrysalis/trusted-dids.json`
 
 ```json
 {
@@ -417,12 +417,12 @@ Standard SSH key-based authentication:
 
 ```bash
 # Use Chrysalis key for Git operations
-GIT_SSH_COMMAND="ssh -i ~/.agentd/ssh_key" git push
+GIT_SSH_COMMAND="ssh -i ~/.chrysalis/ssh_key" git push
 ```
 
 **Key derivation from Ed25519:**
 ```bash
-cf-identity --export-ssh > ~/.agentd/ssh_key
+cf-identity --export-ssh > ~/.chrysalis/ssh_key
 ```
 
 #### 9.6.3 Orchestrator API
@@ -452,7 +452,7 @@ X-Timestamp: 1704067200
 
 #### 9.7.1 Audit Log Format
 
-**Location:** `~/.agentd/audit.jsonl`
+**Location:** `~/.chrysalis/audit.jsonl`
 
 ```json
 {"ts":1704067200,"event":"identity_created","did":"did:key:z6Mk..."}
@@ -475,7 +475,7 @@ X-Timestamp: 1704067200
 All manifest changes tracked in Git:
 
 ```bash
-git log --oneline -- .agentd/*.json
+git log --oneline -- .chrysalis/*.json
 ```
 
 **Commit message format:**
@@ -491,7 +491,7 @@ Hash: abc123...
 Published to known repos as signed announcements:
 
 ```
-~/.agentd/rotations/
+~/.chrysalis/rotations/
   1704067200-z6MkOLD-to-z6MkNEW.json
 ```
 

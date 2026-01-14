@@ -349,7 +349,7 @@ The system supports dynamic model selection across providers and model families.
 
 Models are discovered dynamically from:
 1. **API Endpoints** - Query `/models` from OpenAI-compatible APIs
-2. **Local Config** - `~/.agentd/models.json` for overrides and custom models
+2. **Local Config** - `~/.chrysalis/models.json` for overrides and custom models
 3. **Default Catalog** - Built-in `default-models.json` with curated capabilities
 
 ### Model Selection
