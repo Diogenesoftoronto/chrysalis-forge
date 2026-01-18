@@ -13,7 +13,11 @@ Chrysalis Forge is organized into four distinct layers, each with a clear respon
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                              main.rkt                                   │
-│                        Entry Point & REPL                               │
+│                   Entry Point, CLI Parsing & Modes                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│      runtime.rkt      │     commands.rkt     │       repl.rkt          │
+│   Shared parameters   │   Slash commands &   │   REPL loop &           │
+│     & helpers         │   session helpers    │   terminal handling     │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                            src/core/                                    │
 │         Orchestration: decomposition, optimization, sub-agents          │
@@ -25,7 +29,7 @@ Chrysalis Forge is organized into four distinct layers, each with a clear respon
 │           Persistence: context, traces, evals, cache, vectors           │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                           src/tools/                                    │
-│              25 built-in tools (file, git, jj, web, etc.)               │
+│              28+ built-in tools (file, git, jj, web, etc.)              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -476,17 +480,24 @@ When enabled, this LLM-as-judge reviews potentially dangerous operations before 
 
 ---
 
-## The Entry Point: Tying It All Together
+## The Entry Point: Modular Design
 
-The `main.rkt` file ties all layers together, implementing the REPL and command-line interface. The core execution loop:
+The entry layer has been refactored into focused modules for maintainability:
+
+- **`main.rkt`** (~470 lines): CLI parsing, mode dispatch (GUI, ACP, HTTP service, client), and the core `acp-run-turn` conversation loop
+- **`src/core/runtime.rkt`**: Shared parameters (`model-param`, `base-url-param`, session counters) and utility functions (`levenshtein`, `format-duration`)
+- **`src/core/commands.rkt`**: All slash command handlers (`/help`, `/config`, `/session`, `/thread`, `/models`, etc.) and session management helpers
+- **`src/core/repl.rkt`**: REPL loop, terminal raw mode handling, multiline input with bracketed paste support
+
+The core execution loop:
 
 1. Load or create context from the context store
 2. Parse user input (prompt, commands, configuration)
-3. If the input is a command (starts with `/`), handle it directly
-4. Otherwise, invoke the LLM with the current context and tools
+3. If the input is a command (starts with `/`), dispatch to `handle-slash-command` in commands.rkt
+4. Otherwise, invoke the LLM with the current context and tools via `acp-run-turn`
 5. Process tool calls, executing them with appropriate security checks
 6. Log results to trace and eval stores
-7. Update context with new history
+7. Update context with new history (with automatic compaction if approaching token limits)
 8. Repeat
 
 The streaming response handler provides real-time output while accumulating tool calls:

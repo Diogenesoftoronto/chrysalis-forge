@@ -1,5 +1,6 @@
 #lang racket/base
 (require rackunit
+         racket/list
          "../src/tools/acp-tools.rkt")
 
 (provide acp-tools-tests)
@@ -10,19 +11,18 @@
    
    (test-case
     "make-acp-tools structure"
-    (define tools (make-acp-tools))
-    (check-pred list? tools)
-    (check-equal? (length tools) 25)
+    (define raw-tools (make-acp-tools))
+    (check-pred list? raw-tools)
+    ;; Filter to only valid hash tools (ignores empty lists from dynamic MCP)
+    (define tools (filter hash? (flatten raw-tools)))
+    (check-true (>= (length tools) 25) "Should have at least 25 base tools")
     
-    ;; Check read_file and write_file
-    (define read-tool (car tools))
-    (check-equal? (hash-ref (hash-ref read-tool 'function) 'name) "read_file")
-    
-    (define write-tool (cadr tools))
-    (check-equal? (hash-ref (hash-ref write-tool 'function) 'name) "write_file")
-    
-    ;; Check tools exist by name
+    ;; Check tools exist by name (order-independent)
     (define tool-names (map (λ (t) (hash-ref (hash-ref t 'function) 'name)) tools))
+    
+    ;; Core file tools must exist
+    (check-not-false (member "read_file" tool-names))
+    (check-not-false (member "write_file" tool-names))
     ;; File/search tools
     (check-not-false (member "patch_file" tool-names))
     (check-not-false (member "preview_diff" tool-names))

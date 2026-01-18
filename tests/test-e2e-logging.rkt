@@ -18,7 +18,7 @@
    (test-case
     "Help flag works"
     (define output (run-agentd-cli "-h"))
-    (check-true (string-contains? output "usage: agentd"))
+    (check-true (string-contains? output "usage: chrysalis"))
     (check-true (string-contains? output "--debug"))
     (check-true (string-contains? output "--priority"))
     (check-true (string-contains? output "--acp")))
@@ -33,7 +33,7 @@
     "Debug verbose alias works"
     (define output (run-agentd-cli "-d verbose -h"))
     ;; -h exits before any debug output, but the flag should parse
-    (check-true (string-contains? output "usage: agentd")))
+    (check-true (string-contains? output "usage: chrysalis")))
    
    (test-case
     "ACP banner shows configuration"
@@ -47,22 +47,22 @@
    (test-case
     "Custom priority flag accepted"
     (define output (run-agentd-cli "--priority fast -h"))
-    (check-true (string-contains? output "usage: agentd")))
+    (check-true (string-contains? output "usage: chrysalis")))
    
    (test-case
     "Custom priority NL string accepted"
     (define output (run-agentd-cli "--priority \"I need accuracy\" -h"))
-    (check-true (string-contains? output "usage: agentd")))
+    (check-true (string-contains? output "usage: chrysalis")))
    
    (test-case
     "Security levels work"
     (define output (run-agentd-cli "--perms 2 -h"))
-    (check-true (string-contains? output "usage: agentd")))
+    (check-true (string-contains? output "usage: chrysalis")))
    
    (test-case
     "God mode works"
     (define output (run-agentd-cli "--perms god -h"))
-    (check-true (string-contains? output "usage: agentd")))))
+    (check-true (string-contains? output "usage: chrysalis")))))
 
 (module+ test
   (require rackunit/text-ui)

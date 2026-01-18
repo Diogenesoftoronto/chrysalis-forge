@@ -30,14 +30,15 @@ Agents operate within a `Ctx` (Context):
 
 ### 4. Tool System (`src/tools/acp-tools.rkt`)
 
-**25 Tools** organized by category:
+**28+ Tools** organized by category:
 
 | Category | Tools |
 |----------|-------|
-| **File** | read_file, write_file, patch_file, preview_diff, list_dir, grep_code |
+| **File** | read_file, write_file, patch_file, preview_diff, open_in_editor, file_rollback, file_rollback_list, list_dir, grep_code |
 | **Git** | git_status, git_diff, git_log, git_commit, git_checkout |
 | **Jujutsu** | jj_status, jj_log, jj_diff, jj_undo, jj_op_log, jj_op_restore, jj_workspace_add, jj_workspace_list, jj_describe, jj_new |
-| **Evolution** | suggest_profile, profile_stats, evolve_system, log_feedback |
+| **Evolution** | suggest_profile, profile_stats, evolve_system, log_feedback, use_llm_judge |
+| **MCP** | add_mcp_server (dynamically adds external tool servers) |
 
 ### 5. Sub-Agents (`src/core/sub-agent.rkt`)
 
@@ -89,13 +90,24 @@ log_feedback → eval-store → profile_stats → suggest_profile
               evolve_system → GEPA → improved prompts
 ```
 
-## Execution Loop (`main.rkt`)
+## Execution Loop (Modular Entry Layer)
 
+The entry layer is split into focused modules:
+
+| Module | Purpose |
+|--------|---------|
+| `main.rkt` | CLI parsing, mode dispatch, `acp-run-turn` conversation loop (~470 lines) |
+| `src/core/runtime.rkt` | Shared parameters (`model-param`, session counters) and helpers |
+| `src/core/commands.rkt` | Slash command handlers and session management |
+| `src/core/repl.rkt` | REPL loop, terminal handling, multiline input |
+
+**Core Loop**:
 1. **Prompt Rendering**: Module + context + inputs compiled to prompt
 2. **Tool Execution**: Security-gated via `execute-acp-tool`
 3. **Auto-Correction**: `run-code-with-retry!` retries failed executions
-4. **Trace Logging**: All tasks logged to `traces.jsonl`
-5. **Eval Logging**: Profile performance logged to `evals.jsonl`
+4. **Context Compaction**: Automatic summarization when approaching token limits
+5. **Trace Logging**: All tasks logged to `traces.jsonl`
+6. **Eval Logging**: Profile performance logged to `evals.jsonl`
 
 ## Process Supervision (`src/core/process-supervisor.rkt`)
 

@@ -1,12 +1,16 @@
 #lang racket
-(require racket/cmdline json racket/file racket/list racket/format racket/date "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
-
+(require racket/cmdline json racket/file racket/list racket/format racket/date racket/string racket/match racket/system
+         "src/core/acp-stdio.rkt" "src/stores/context-store.rkt" "src/llm/dspy-core.rkt"
          "src/utils/dotenv.rkt" "src/llm/openai-responses-stream.rkt" "src/llm/openai-client.rkt"
          "src/tools/acp-tools.rkt" "src/core/optimizer-gepa.rkt" "src/stores/trace-store.rkt" "src/tools/rdf-tools.rkt"
          "src/core/process-supervisor.rkt" "src/tools/sandbox-exec.rkt" "src/utils/debug.rkt" "src/llm/pricing-model.rkt"
          "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt"
          "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt" "src/llm/model-registry.rkt"
-         "src/stores/thread-store.rkt")
+         "src/stores/thread-store.rkt" "src/stores/rollback-store.rkt" "src/stores/session-stats.rkt" "src/tools/lsp-client.rkt"
+         ;; Modular imports - runtime state, commands, and REPL
+         "src/core/runtime.rkt"
+         "src/core/commands.rkt"
+         "src/core/repl.rkt")
 
 ;; Conditionally require service module (may not exist yet)
 (define service-available?
@@ -53,27 +57,11 @@
       (getenv "CHRYSALIS_DEFAULT_MODEL")
       "gpt-5.2"))
 
-(define api-key (getenv "OPENAI_API_KEY"))
-(define env-api-key api-key)
-(define base-url-param (make-parameter (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1")))
-(define model-param (make-parameter (get-default-model)))
-(define vision-model-param (make-parameter (or (getenv "VISION_MODEL") (get-default-model))))
-(define interactive-param (make-parameter (or (getenv "INTERACTIVE") #f)))
-(define attachments (make-parameter '())) ; List of (type content) pairs
+;; Override model-param with config-aware default (runtime.rkt provides the base)
+(model-param (get-default-model))
+(vision-model-param (or (getenv "VISION_MODEL") (get-default-model)))
 
-(define budget-param (make-parameter (or (getenv "BUDGET") +inf.0)))
-(define timeout-param (make-parameter (or (getenv "TIMEOUT") +inf.0)))
-(define pretty-param (make-parameter (or (getenv "PRETTY") "none")))
-(define session-start-time (current-seconds))
-(define total-session-cost 0.0)
-(define session-input-tokens 0)
-(define session-output-tokens 0)
-(define session-turn-count 0)
-(define session-model-usage (make-hash))
-(define session-tool-usage (make-hash))
-
-(define current-security-level (make-parameter 1))
-(define priority-param (make-parameter (or (getenv "PRIORITY") "best")))
+;; ACP/Service mode parameters (not in runtime.rkt)
 (define acp-port-param (make-parameter (or (getenv "ACP_PORT") "stdio")))
 
 ;; Service mode parameters
@@ -99,9 +87,6 @@
   (printf "\n[ALERT] ~a: ~a. Allow? [y/N]: " action description)
   (flush-output)
   (if (member (string-downcase (or (read-line) "n")) '("y" "yes")) #t (error 'security "Denied.")))
-
-(define llm-judge-param (make-parameter (or (getenv "LLM_JUDGE") #f)))
-(define llm-judge-model-param (make-parameter (or (getenv "LLM_JUDGE_MODEL") (get-default-model))))
 
 (define (evaluate-safety action content)
   (unless (llm-judge-param) (values #t "")) ;; Pass if judge not enabled
@@ -261,19 +246,14 @@
     (define in-tok (hash-ref usage 'prompt_tokens 0))
     (define out-tok (hash-ref usage 'completion_tokens 0))
     (define cost (calculate-cost current-model in-tok out-tok))
-    (set! total-session-cost (+ total-session-cost cost))
+    
+    ;; Update session stats using setter functions from runtime.rkt
+    (session-add-cost! cost)
+    (session-add-tokens! in-tok out-tok)
+    (session-increment-turns!)
+    (session-record-model-usage! current-model in-tok out-tok cost)
 
-    (set! session-input-tokens (+ session-input-tokens in-tok))
-    (set! session-output-tokens (+ session-output-tokens out-tok))
-    (set! session-turn-count (add1 session-turn-count))
-
-    ;; Track per-model usage
-    (define model-entry (hash-ref session-model-usage current-model (hash 'in 0 'out 0 'calls 0 'cost 0.0)))
-    (hash-set! session-model-usage current-model
-               (hash 'in (+ (hash-ref model-entry 'in) in-tok)
-                     'out (+ (hash-ref model-entry 'out) out-tok)
-                     'calls (add1 (hash-ref model-entry 'calls))
-                     'cost (+ (hash-ref model-entry 'cost) cost)))
+    (session-stats-add-turn! #:tokens-in in-tok #:tokens-out out-tok #:cost cost)
 
     (if (null? res)
         ;; Final turn: Save history back to context, with compaction if needed
@@ -309,151 +289,15 @@
           (log-trace! #:task "Turn" #:history msgs #:tool-results res #:final-response "Streamed" #:tokens usage #:cost cost)
           (loop (append msgs (list assistant-msg) res))))))
 
-;; Generate a session title from the first user message using a cheap model
-(define (generate-session-title first-message #:api-key [key #f] #:api-base [base #f])
-  "Generate a concise title for a session based on the first user message"
-  (with-handlers ([exn:fail? (λ (e) 
-                                (log-debug 1 'session "Failed to generate title: ~a" (exn-message e))
-                                #f)])
-    (let* ([api-key-val (or key (getenv "OPENAI_API_KEY"))]
-           [api-base-val (or base (base-url-param))])
-      (if (not api-key-val)
-          #f
-          (let* ([cheap-model (or (getenv "TITLE_MODEL") "gpt-4o-mini")]
-                 [sender (make-openai-sender #:model cheap-model #:api-key api-key-val #:api-base api-base-val)]
-                 [prompt (format "Generate a concise, descriptive title (3-8 words) for this conversation based on the user's first message. Return only the title, no quotes or explanation.\n\nUser message: ~a" 
-                                 (if (> (string-length first-message) 200)
-                                     (string-append (substring first-message 0 200) "...")
-                                     first-message))])
-            (define-values (ok? title-text usage)
-              (sender prompt))
-            (if (and ok? title-text)
-                (let ([clean-title (string-trim title-text)])
-                  ;; Remove quotes if present
-                  (if (and (> (string-length clean-title) 2)
-                           (equal? (substring clean-title 0 1) "\"")
-                           (equal? (substring clean-title (sub1 (string-length clean-title))) "\""))
-                      (substring clean-title 1 (sub1 (string-length clean-title)))
-                      clean-title))
-                #f))))))
+;; Functions imported from commands.rkt:
+;; - generate-session-title, handle-new-session, create-new-session!, 
+;;   resume-last-session!, resume-session-by-id!, list-sessions!, list-threads!
+;;   display-figlet-banner, print-session-summary!, handle-slash-command
 
-(define (handle-new-session sid mode)
-  (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [mode (string->symbol mode)]))))))
-
-;; Create a new session with auto-generated ID
-(define (create-new-session! [mode "code"])
-  "Create a new session and return its ID"
-  (define session-id (generate-session-id))
-  (define session-name (string->symbol (format "session-~a" session-id)))
-  (session-create! session-name (string->symbol mode) #:id session-id)
-  (session-switch! session-name)
-  session-id)
-
-;; Resume last session or create new if none exists
-(define (resume-last-session!)
-  "Resume the last session, or create a new one if none exists"
-  (define last-id (session-get-last))
-  (if last-id
-      (begin
-        (session-resume-by-id last-id)
-        last-id)
-      (create-new-session!)))
-
-;; Resume session by ID
-(define (resume-session-by-id! session-id)
-  "Resume a session by its ID"
-  (define resumed-name (session-resume-by-id session-id))
-  (if resumed-name
-      session-id
-      (error (format "Session not found: ~a" session-id))))
-
-;; List sessions with metadata
-(define (list-sessions!)
-  "List all sessions with their metadata"
-  (define sessions (session-list-with-metadata))
-  (if (null? sessions)
-      (printf "No sessions found.\n")
-      (begin
-        (printf "\nSessions:\n")
-        (printf "~a\n" (make-string 80 #\-))
-        (for ([s sessions])
-          (define id (hash-ref s 'id))
-          (define title (hash-ref s 'title))
-          (define created (hash-ref s 'created_at))
-          (define is-active (hash-ref s 'is_active))
-          (define created-str (if created
-                                  (date->string (seconds->date created) #t)
-                                  "Unknown"))
-          (printf "~a ~a\n" (if is-active "*" " ") id)
-          (when title
-            (printf "    Title: ~a\n" title))
-          (printf "    Created: ~a\n" created-str)
-          (printf "\n"))
-        (printf "Use 'chrysalis --session resume' to resume the last session.\n")
-        (printf "Use 'chrysalis --session <id>' to resume a specific session.\n"))))
-
-;; List threads with metadata
-(define (list-threads!)
-  "List all local threads"
-  (define threads (local-thread-list))
-  (define active (local-thread-get-active))
-  (if (null? threads)
-      (printf "No threads found. Use '/thread new <title>' to create one.\n")
-      (begin
-        (printf "\nThreads:\n")
-        (printf "~a\n" (make-string 80 #\-))
-        (for ([t threads])
-          (define id (hash-ref t 'id))
-          (define title (hash-ref t 'title))
-          (define status (hash-ref t 'status))
-          (define updated (hash-ref t 'updated_at))
-          (define is-active (equal? id active))
-          (define updated-str (if updated
-                                  (date->string (seconds->date updated) #t)
-                                  "Unknown"))
-          (printf "~a ~a\n" (if is-active "*" " ") id)
-          (when title
-            (printf "    Title: ~a\n" title))
-          (printf "    Status: ~a | Updated: ~a\n" status updated-str)
-          (printf "\n"))
-        (printf "Use '/thread switch <id>' to switch threads.\n")
-        (printf "Use '/thread continue' to create a continuation thread.\n"))))
-
-
-(require racket/system)
-
-(define (display-figlet-banner text font)
-  "Display ASCII art banner using figlet. Falls back to plain text if figlet is not available."
-  (define figlet-path (find-executable-path "figlet"))
-  (if figlet-path
-      (let ([cmd (list figlet-path "-f" font text)])
-        (with-handlers ([exn:fail? (λ (e) (displayln text))])
-          (define-values (sp stdout stdin stderr)
-            (apply subprocess (current-output-port) #f (current-error-port) cmd))
-          (subprocess-wait sp)
-          (define exit-code (subprocess-status sp))
-          (when (not (equal? exit-code 0))
-            (displayln text))))
-      (displayln text)))
-
-(define (levenshtein s1 s2)
-  (let* ([len1 (string-length s1)]
-         [len2 (string-length s2)]
-         [matrix (make-vector (add1 len1))])
-    (for ([i (in-range (add1 len1))])
-      (vector-set! matrix i (make-vector (add1 len2))))
-    (for ([i (in-range (add1 len1))])
-      (vector-set! (vector-ref matrix i) 0 i))
-    (for ([j (in-range (add1 len2))])
-      (vector-set! (vector-ref matrix 0) j j))
-    (for ([i (in-range 1 (add1 len1))])
-      (for ([j (in-range 1 (add1 len2))])
-        (let ([cost (if (char=? (string-ref s1 (sub1 i)) (string-ref s2 (sub1 j))) 0 1)])
-          (vector-set! (vector-ref matrix i) j
-                       (min (add1 (vector-ref (vector-ref matrix (sub1 i)) j))
-                            (add1 (vector-ref (vector-ref matrix i) (sub1 j)))
-                            (+ cost (vector-ref (vector-ref matrix (sub1 i)) (sub1 j))))))))
-    (vector-ref (vector-ref matrix len1) len2)))
+;; Functions imported from runtime.rkt:
+;; - levenshtein, format-duration, format-number
+;; - session-start-time, session-input-tokens, session-output-tokens, 
+;;   session-turn-count, session-model-usage, session-tool-usage, total-session-cost
 
 (define (verify-env! #:fail [fail? #f])
   (unless env-api-key
@@ -514,490 +358,31 @@
 
     (newline)))
 
-(define (handle-slash-command cmd input)
-  (with-handlers ([exn:fail? (λ (e)
-                               (eprintf "[ERROR] Command failed: ~a~n" (exn-message e))
-                               (eprintf "Type /help for available commands.~n"))])
-    (match cmd
-      [(or "exit" "quit") (print-session-summary!) (displayln "Goodbye.") (exit)]
-      ["help" (displayln "Commands:\n  /help - Show this message\n  /exit, /quit - Exit\n  /raco <args> - Run raco commands\n  /config list - List current config\n  /config <key> <val> - Set param\n  /models - List available models from API\n  /workflows - List workflows\n  /workflows show <slug> - Show workflow details\n  /workflows delete <slug> - Delete a workflow\n  /init - Initialize project")]
-      ["raco"
-       (if (>= (string-length input) 6)
-           (system (format "raco ~a" (substring input 6)))
-           (displayln "Usage: /raco <args>"))]
-      ["config"
-       (define rest (if (>= (string-length input) 8)
-                        (string-trim (substring input 8))
-                        ""))
-       (define parts (if (> (string-length rest) 0)
-                         (string-split rest)
-                         '()))
-       (cond
-         [(null? parts)
-          (displayln "Usage: /config list  OR  /config <key> <value>")]
-         [(and (= (length parts) 1) (equal? (first parts) "list"))
-          ;; List all current config values
-          (printf "Current Configuration:\n")
-          (printf "  Model: ~a\n" (model-param))
-          (printf "  Vision Model: ~a\n" (vision-model-param))
-          (printf "  Judge Model: ~a\n" (llm-judge-model-param))
-          (printf "  Base URL: ~a\n" (base-url-param))
-          (printf "  Budget: ~a\n" (if (= (budget-param) +inf.0) "unlimited" (budget-param)))
-          (printf "  Timeout: ~a\n" (if (= (timeout-param) +inf.0) "unlimited" (timeout-param)))
-          (printf "  Priority: ~a\n" (priority-param))
-          (printf "  Security Level: ~a\n" (current-security-level))
-          (printf "  LLM Judge: ~a\n" (if (llm-judge-param) "ENABLED" "DISABLED"))
-          (printf "  API Key: ~a\n"
-                  (if env-api-key
-                      (let ([len (string-length env-api-key)])
-                        (if (> len 12)
-                            (format "~a...~a" (substring env-api-key 0 8) (substring env-api-key (- len 4)))
-                            (format "~a..." (substring env-api-key 0 (min 4 len)))))
-                      "NOT SET"))
-          (printf "  Interactive: ~a\n" (if (interactive-param) "YES" "NO"))
-          (printf "  Pretty: ~a\n" (pretty-param))
-          (printf "  Debug Level: ~a\n" (current-debug-level))]
-         [(= (length parts) 2)
-          (define key (first parts))
-          (define valid-keys '("model" "vision-model" "judge-model" "budget" "priority"))
-          (match key
-            ["model" (model-param (second parts)) (printf "Model set to ~a\n" (second parts))]
-            ["vision-model" (vision-model-param (second parts)) (printf "Vision Model set to ~a\n" (second parts))]
-            ["judge-model" (llm-judge-model-param (second parts)) (printf "Judge Model set to ~a\n" (second parts))]
-            ["budget" (budget-param (string->number (second parts))) (printf "Budget set to ~a\n" (second parts))]
-            ["priority"
-             (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol (second parts))])))))
-             (printf "Priority set to ~a\n" (second parts))]
-            [_
-             (define suggestions (filter (λ (k) (<= (levenshtein key k) 2)) valid-keys))
-             (if (not (null? suggestions))
-                 (printf "Unknown config key: ~a\nDid you mean: ~a?\n" key (string-join suggestions ", "))
-                 (printf "Unknown config key: ~a\nValid keys: ~a\n" key (string-join valid-keys ", ")))])]
-         [else (displayln "Usage: /config list  OR  /config <key> <value>")])]
+;; handle-slash-command is imported from commands.rkt, but we wrap it to inject acp-run-turn
+(define (main-handle-slash-command cmd input)
+  (handle-slash-command cmd input #:run-turn acp-run-turn))
 
-      ["judge"
-       (llm-judge-param (not (llm-judge-param)))
-       (printf "LLM Security Judge: ~a\n" (if (llm-judge-param) "ENABLED" "DISABLED"))]
+;; Removed ~410 lines of duplicate code:
+;; - handle-slash-command (full definition) - now in commands.rkt
+;; - format-duration, format-number - now in runtime.rkt  
+;; - print-session-summary! - now in commands.rkt
+;; - with-raw-terminal, read-multiline-input, read-bracket-seq - now in repl.rkt
+;; - Old repl-loop definition - now using modular repl-loop from repl.rkt
 
-      ["session"
-       (define rest (if (>= (string-length input) 8)
-                        (string-trim (substring input 8))
-                        ""))
-       (define parts (if (> (string-length rest) 0)
-                         (string-split rest)
-                         '()))
-       (if (>= (length parts) 1)
-           (match (first parts)
-             ["list"
-              (list-sessions!)]
-             ["new"
-              (if (= (length parts) 2)
-                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                    (session-create! (second parts))
-                    (session-switch! (second parts))
-                    (printf "Session context created and switched to '~a'.\n" (second parts)))
-                  (displayln "Usage: /session new <name>"))]
-             ["switch"
-              (if (= (length parts) 2)
-                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                    (session-switch! (second parts))
-                    (printf "Switched to session '~a'.\n" (second parts)))
-                  (displayln "Usage: /session switch <name>"))]
-             ["delete"
-              (if (= (length parts) 2)
-                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                    (session-delete! (second parts))
-                    (printf "Deleted session '~a'.\n" (second parts)))
-                  (displayln "Usage: /session delete <name>"))]
-             [_ (displayln "Unknown session command. Try list, new, switch, delete.")])
-           (displayln "Usage: /session <list|new|switch|delete> ..."))]
-
-      ["thread"
-       (define rest (if (>= (string-length input) 8)
-                        (string-trim (substring input 8))
-                        ""))
-       (define parts (if (> (string-length rest) 0)
-                         (string-split rest)
-                         '()))
-       (if (>= (length parts) 1)
-           (match (first parts)
-             ["list"
-              (list-threads!)]
-             ["new"
-              (define title (if (>= (length parts) 2)
-                                (string-join (cdr parts) " ")
-                                #f))
-              (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                (define id (local-thread-create! (or title "Untitled")))
-                (local-thread-switch! id)
-                (printf "Created and switched to thread: ~a\n" id))]
-             ["switch"
-              (if (>= (length parts) 2)
-                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                    (local-thread-switch! (second parts))
-                    (printf "Switched to thread: ~a\n" (second parts)))
-                  (displayln "Usage: /thread switch <id>"))]
-             ["continue"
-              (define current (local-thread-get-active))
-              (if current
-                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                    (define title (if (>= (length parts) 2)
-                                      (string-join (cdr parts) " ")
-                                      #f))
-                    (define new-id (local-thread-continue! current #:title title))
-                    (local-thread-switch! new-id)
-                    (printf "Created continuation thread: ~a\n" new-id))
-                  (displayln "No active thread to continue from."))]
-             ["child"
-              (define current (local-thread-get-active))
-              (if (and current (>= (length parts) 2))
-                  (with-handlers ([exn:fail? (λ (e) (printf "Error: ~a\n" (exn-message e)))])
-                    (define title (string-join (cdr parts) " "))
-                    (define new-id (local-thread-spawn-child! current title))
-                    (local-thread-switch! new-id)
-                    (printf "Created child thread: ~a\n" new-id))
-                  (displayln "Usage: /thread child <title> (requires active thread)"))]
-             ["info"
-              (define current (local-thread-get-active))
-              (if current
-                  (let* ([thread (local-thread-find current)]
-                         [rels (if thread (local-thread-get-relations current) '())]
-                         [contexts (if thread (local-context-list current) '())])
-                    (if thread
-                        (begin
-                          (printf "\nThread: ~a\n" (hash-ref thread 'id))
-                          (printf "Title: ~a\n" (or (hash-ref thread 'title) "Untitled"))
-                          (printf "Status: ~a\n" (hash-ref thread 'status))
-                          (printf "Created: ~a\n" (date->string (seconds->date (hash-ref thread 'created_at)) #t))
-                          (when (hash-ref thread 'summary #f)
-                            (printf "Summary: ~a\n" (hash-ref thread 'summary)))
-                          (unless (null? rels)
-                            (printf "\nRelations:\n")
-                            (for ([r rels])
-                              (printf "  ~a -> ~a (~a)\n" 
-                                      (hash-ref r 'from) 
-                                      (hash-ref r 'to) 
-                                      (hash-ref r 'type))))
-                          (unless (null? contexts)
-                            (printf "\nContext Nodes:\n")
-                            (for ([c contexts])
-                              (printf "  [~a] ~a\n" (hash-ref c 'kind) (hash-ref c 'title)))))
-                        (displayln "Thread not found.")))
-                  (displayln "No active thread."))]
-             ["context"
-              (define current (local-thread-get-active))
-              (if (and current (>= (length parts) 2))
-                  (let* ([sub-cmd (second parts)]
-                         [rest-parts (if (>= (length parts) 3) (cddr parts) '())])
-                    (match sub-cmd
-                      ["add"
-                       (if (>= (length rest-parts) 1)
-                           (let* ([title (string-join rest-parts " ")]
-                                  [id (local-context-create! current title)])
-                             (printf "Created context node: ~a\n" id))
-                           (displayln "Usage: /thread context add <title>"))]
-                      ["list"
-                       (let ([contexts (local-context-list current)])
-                         (if (null? contexts)
-                             (displayln "No context nodes.")
-                             (for ([c contexts])
-                               (printf "  [~a] ~a: ~a\n" 
-                                       (hash-ref c 'kind) 
-                                       (hash-ref c 'id)
-                                       (hash-ref c 'title)))))]
-                      [_ (displayln "Usage: /thread context <add|list> ...")]))
-                  (displayln "Usage: /thread context <add|list> ... (requires active thread)"))]
-             [_ (displayln "Unknown thread command. Try: list, new, switch, continue, child, info, context")])
-           (displayln "Usage: /thread <list|new|switch|continue|child|info|context> ..."))]
-
-      [(or "attach" "file")
-       (define start-idx (if (string-prefix? input "/attach") 8 6))
-       (define path (if (>= (string-length input) start-idx)
-                        (string-trim (substring input start-idx))
-                        ""))
-       (if (file-exists? path)
-           (begin
-             (attachments (cons (list 'file path (file->string path)) (attachments)))
-             (printf "Attached file: ~a\n" path))
-           (printf "File not found: ~a\n" path))]
-      ["image"
-       (define path (if (>= (string-length input) 7)
-                        (string-trim (substring input 7))
-                        ""))
-       (begin
-         ;; In a real app we'd base64 encode here, for now assuming path or URL
-         ;; For local files, we'd need to implementing base64 reading.
-         (attachments (cons (list 'image path) (attachments)))
-         (printf "Attached image: ~a\n" path))]
-      ["models"
-       (printf "Fetching available models from ~a...\n" (base-url-param))
-       (with-handlers ([exn:fail? (λ (e)
-                                    (eprintf "[ERROR] Failed to fetch models: ~a\n" (exn-message e))
-                                    (eprintf "Check your API endpoint and key configuration.\n"))])
-         (define models (fetch-models-from-endpoint (base-url-param) api-key))
-         (if (null? models)
-             (printf "No models found. The API endpoint may not support model listing.\n")
-             (begin
-               (printf "\nAvailable Models:\n")
-               (for ([m models])
-                 (define model-id (cond
-                                    [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
-                                    [(string? m) m]
-                                    [else "unknown"]))
-                 (printf "  - ~a\n" model-id))
-               (printf "\nUse '/config model <name>' to set a model.\n"))))]
-
-      ["workflows"
-       (define rest (if (>= (string-length input) 10)
-                        (string-trim (substring input 10))
-                        ""))
-       (define parts (if (> (string-length rest) 0)
-                         (string-split rest)
-                         '()))
-       (cond
-         [(or (null? parts) (equal? (first parts) "list"))
-          ;; List all workflows
-          (with-handlers ([exn:fail? (λ (e)
-                                       (eprintf "[ERROR] Failed to list workflows: ~a\n" (exn-message e)))])
-            (define workflows-json (workflow-list))
-            (define workflows (string->jsexpr workflows-json))
-            (if (null? workflows)
-                (printf "No workflows found. Use workflow tools to create workflows.\n")
-                (begin
-                  (printf "\nAvailable Workflows:\n")
-                  (for ([w workflows])
-                    (define slug (hash-ref w 'slug "unknown"))
-                    (define desc (hash-ref w 'description "No description"))
-                    (printf "  ~a - ~a\n" slug desc))
-                  (printf "\nUse '/workflows show <slug>' to view a workflow.\n"))))]
-         [(and (>= (length parts) 2) (equal? (first parts) "show"))
-          ;; Show workflow details
-          (define slug (second parts))
-          (with-handlers ([exn:fail? (λ (e)
-                                       (eprintf "[ERROR] Failed to get workflow: ~a\n" (exn-message e)))])
-            (define content (workflow-get slug))
-            (if (equal? content "null")
-                (printf "Workflow '~a' not found.\n" slug)
-                (begin
-                  (printf "\nWorkflow: ~a\n" slug)
-                  (printf "Content:\n~a\n" content))))]
-         [(and (>= (length parts) 2) (equal? (first parts) "delete"))
-          ;; Delete workflow
-          (define slug (second parts))
-          (with-handlers ([exn:fail? (λ (e)
-                                       (eprintf "[ERROR] Failed to delete workflow: ~a\n" (exn-message e)))])
-            (define result (workflow-delete slug))
-            (printf "~a\n" result))]
-         [else
-          (displayln "Usage: /workflows [list|show <slug>|delete <slug>]")])]
-
-      ["init"
-       (printf "Initializing agent for project...\n")
-       (define init-prompt (format #<<EOF
-Analyze this codebase and create/update **agents.md** to help future agents work effectively in this repository.
-
-**First**: Check if directory is empty or only contains config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run this command to generate agents.md."
-
-**Goal**: Document what an agent needs to know to work in this codebase - commands, patterns, conventions, gotchas.
-
-**Discovery process**:
-
-1. Check directory contents with `ls`
-2. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
-3. Identify project type from config files and directory structure
-4. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
-5. Read representative source files to understand code patterns
-6. If agents.md exists, read and improve it
-
-**Content to include**:
-
-- Essential commands (build, test, run, deploy, etc.) - whatever is relevant for this project
-- Code organization and structure
-- Naming conventions and style patterns
-- Testing approach and patterns
-- Important gotchas or non-obvious patterns
-- Any project-specific context from existing rule files
-
-**Format**: Clear markdown sections. Use your judgment on structure based on what you find. Aim for completeness over brevity - include everything an agent would need to know.
-
-**Critical**: Only document what you actually observe. Never invent commands, patterns, or conventions. If you can't find something, don't include it.
-EOF
-                                   ))
-       (acp-run-turn "cli" init-prompt (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))]
-      [_
-       (define candidates '("exit" "quit" "help" "raco" "config" "models" "workflows" "init"))
-       (define suggestions (filter (λ (c) (<= (levenshtein cmd c) 2)) candidates))
-       (if (not (null? suggestions))
-           (printf "Unknown command '/~a'. Did you mean: /~a?\n" cmd (string-join suggestions ", /"))
-           (printf "Unknown command '/~a'. Type /help for list.\n" cmd))])))
-
-(define (format-duration seconds)
-  (define mins (quotient seconds 60))
-  (define secs (remainder seconds 60))
-  (if (> mins 0)
-      (format "~am ~as" mins secs)
-      (format "~as" secs)))
-
-(define (format-number n)
-  (define s (number->string n))
-  (define len (string-length s))
-  (if (<= len 3) s
-      (let loop ([i (- len 3)] [acc (substring s (- len 3))])
-        (if (<= i 0)
-            (string-append (substring s 0 i) acc)
-            (loop (- i 3) (string-append "," (substring s (max 0 (- i 3)) i) acc))))))
-
-(define (print-session-summary!)
-  (define duration (- (current-seconds) session-start-time))
-  (define total-tokens (+ session-input-tokens session-output-tokens))
-
-  ;; Get MCP stats
-  (define mcp-stats (with-handlers ([exn:fail? (λ (_) (hash 'connections 0 'tool_calls 0 'tool_success 0 'tool_failures 0 'clients (hash)))])
-                      (mcp-get-session-stats)))
-
-  ;; Get lifetime tool stats from eval-store
-  (define lifetime-tools (with-handlers ([exn:fail? (λ (_) (make-hash))])
-                           (get-tool-stats)))
-
-  (newline)
-  (displayln "───────────────────────────── Session Summary ─────────────────────────────")
-  (printf "Duration        ~a~n" (format-duration duration))
-  (printf "Turns           ~a~n" session-turn-count)
-  (newline)
-
-  ;; Model usage
-  (unless (hash-empty? session-model-usage)
-    (displayln "Model Usage:")
-    (for ([(model stats) (in-hash session-model-usage)])
-      (printf "  ~a    ~a calls   ~a in · ~a out   $~a~n"
-              (~a model #:width 16)
-              (hash-ref stats 'calls)
-              (format-number (hash-ref stats 'in))
-              (format-number (hash-ref stats 'out))
-              (real->decimal-string (hash-ref stats 'cost) 4)))
-    (newline))
-
-  ;; Token summary
-  (printf "Tokens          ~a input   ~a output   ~a total~n"
-          (format-number session-input-tokens)
-          (format-number session-output-tokens)
-          (format-number total-tokens))
-  (printf "Cost            $~a~n" (real->decimal-string total-session-cost 4))
-  (newline)
-
-  ;; Tool usage
-  (unless (hash-empty? session-tool-usage)
-    (displayln "Tools Used:")
-    (define sorted-tools (sort (hash->list session-tool-usage) > #:key cdr))
-    (for ([tool-pair (take sorted-tools (min 10 (length sorted-tools)))])
-      (define name (car tool-pair))
-      (define count (cdr tool-pair))
-      (define lifetime (hash-ref lifetime-tools name 0))
-      (printf "  ~a  ~a call~a~a~n"
-              (~a name #:width 20)
-              count
-              (if (= count 1) "" "s")
-              (if (> lifetime 0) (format "   (~a lifetime)" lifetime) "")))
-    (when (> (length sorted-tools) 10)
-      (printf "  ... and ~a more tools~n" (- (length sorted-tools) 10)))
-    (newline))
-
-  ;; MCP stats
-  (when (> (hash-ref mcp-stats 'connections 0) 0)
-    (displayln "MCP:")
-    (define clients (hash-ref mcp-stats 'clients (hash)))
-    (unless (hash-empty? clients)
-      (printf "  Clients: ~a~n"
-              (string-join (for/list ([(name stats) (in-hash clients)])
-                             (format "~a (~a)" name (hash-ref stats 'calls 0)))
-                           ", ")))
-    (printf "  Tool calls: ~a total   ~a success · ~a failure~n"
-            (hash-ref mcp-stats 'tool_calls 0)
-            (hash-ref mcp-stats 'tool_success 0)
-            (hash-ref mcp-stats 'tool_failures 0))
-    (when (> (hash-ref mcp-stats 'connection_failures 0) 0)
-      (printf "  Connection failures: ~a~n" (hash-ref mcp-stats 'connection_failures 0)))
-    (newline))
-
-  (displayln "──────────────────────────────────────────────────────────────────────────"))
-
-(define (repl-loop)
-  (check-env-verbose!)
-  (verify-env! #:fail #f)
-  
-  ;; Handle session resumption or creation
-  (define session-action (session-action-param))
-  (cond
-    [(equal? session-action "list")
-     (list-sessions!)
-     (exit 0)]
-    [(equal? session-action "resume")
-     (define resumed-id (resume-last-session!))
-     (printf "Resumed session: ~a\n" resumed-id)]
-    [(and session-action (not (equal? session-action "")))
-     (resume-session-by-id! session-action)
-     (printf "Resumed session: ~a\n" session-action)]
-    [else
-     ;; Create new session
-     (define new-id (create-new-session!))
-     (printf "Started new session: ~a\n" new-id)])
-  
-  (display-figlet-banner "chrysalis forge" "standard")
-  (newline)
-  (displayln "Type /exit to leave or /help for commands.")
-  (handle-new-session "cli" "code")
-  
-  ;; Track if this is the first user message for title generation
-  (define first-message? (box #t))
-
-  (define last-break-time 0)
-
-  (let loop ()
-    (with-handlers ([exn:break?
-                     (λ (e)
-                       (define now (current-seconds))
-                       (if (< (- now last-break-time) 2)
-                           (begin
-                             (newline)
-                             (displayln "Exiting...")
-                             (print-session-summary!)
-                             (exit 0))
-                           (begin
-                             (newline)
-                             (displayln "^C")
-                             (displayln "(Press Ctrl+C again to quit)")
-                             (set! last-break-time now)
-                             (loop))))])
-      (display "\n[USER]> ")(flush-output)
-      (define input (read-line))
-      (cond
-        [(eof-object? input)
-         (newline)
-         (displayln "Exiting (EOF)...")
-         (print-session-summary!)
-         (exit 0)]
-        [(string=? (string-trim input) "")
-         (loop)]
-        [else
-         (cond
-           [(string-prefix? input "/")
-            (define cmd (first (string-split (substring input 1))))
-            (handle-slash-command cmd input)]
-           [else
-            (with-handlers ([exn:fail? (λ (e)
-                                         (eprintf "\n[ERROR] ~a\n" (exn-message e))
-                                         (eprintf "The REPL will continue. Use /models to list available models.\n"))])
-              ;; Generate title after first user message
-              (when (unbox first-message?)
-                (set-box! first-message? #f)
-                (define db (load-ctx))
-                (define active-name (hash-ref db 'active))
-                (define title (generate-session-title input))
-                (when title
-                  (session-update-title! active-name title)
-                  (log-debug 1 'session "Generated session title: ~a" title)))
-              (acp-run-turn "cli" input (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f)))])
-         (loop)]))))
+;; The main-repl-loop wraps the modular repl-loop with dependency injection
+(define (main-repl-loop)
+  (repl-loop #:run-turn acp-run-turn
+             #:check-env-verbose! check-env-verbose!
+             #:verify-env! verify-env!
+             #:session-action-param session-action-param
+             #:list-sessions! list-sessions!
+             #:resume-last-session! resume-last-session!
+             #:resume-session-by-id! resume-session-by-id!
+             #:create-new-session! create-new-session!
+             #:display-figlet-banner display-figlet-banner
+             #:handle-new-session handle-new-session
+             #:handle-slash-command main-handle-slash-command
+             #:print-session-summary! print-session-summary!))
 
 (define mode-param (make-parameter 'run))
 (command-line #:program "chrysalis"
@@ -1005,7 +390,7 @@ EOF
               [("--gui") "Launch GUI" (mode-param 'gui)]
               [("--acp") "Run ACP Server" (mode-param 'acp)]
               [("--acp-port") port "ACP Port (default: stdio)" (acp-port-param port)]
-              [("--perms") p "Security Level (0, 1, 2, 3, god)"
+              [("-P" "--perms") p "Security Level (0, 1, 2, 3, god)"
                            (match p
                              ["0" (current-security-level 0)]
                              ["1" (current-security-level 1)]
@@ -1043,10 +428,9 @@ EOF
                  (define gui-mod (dynamic-require 'chrysalis-forge/src/gui/main-gui 'run-gui!))
                  (gui-mod)]
                 ['run (begin
-                        (set! session-start-time (current-seconds)) ;; Reset start time for run
                         (check-env-verbose!)
                         (if (or (interactive-param) (null? raw-args))
-                            (repl-loop)
+                            (main-repl-loop)
                             (begin
                               (verify-env! #:fail #t)
                               (let ([task (string-join raw-args " ")])

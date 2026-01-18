@@ -199,7 +199,7 @@ EOF
   (define sessions (session-list-with-metadata))
   (if (null? sessions)
       #f
-      (let ([sorted (sort sessions > #:key (λ (s) (hash-ref s 'updated_at 0)))])
+      (let ([sorted (sort sessions > #:key (λ (s) (or (hash-ref s 'updated_at #f) 0)))])
         (hash-ref (first sorted) 'id))))
 
 ;; Resume session by ID
