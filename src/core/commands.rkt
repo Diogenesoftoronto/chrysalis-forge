@@ -17,7 +17,12 @@
          "../tools/mcp-client.rkt"
          "../llm/model-registry.rkt"
          "../stores/eval-store.rkt"
-         "./runtime.rkt")
+         "./runtime.rkt"
+         "./command-queue.rkt"
+         "./repl.rkt"
+         "../utils/debug.rkt"
+         "../utils/session-summary-viz.rkt"
+         "../utils/message-boxes.rkt")
 
 (provide handle-slash-command
          create-new-session!
@@ -122,74 +127,35 @@
   (define duration (- (current-seconds) session-start-time))
   (define total-tokens (+ session-input-tokens session-output-tokens))
   
-  (define mcp-stats (with-handlers ([exn:fail? (λ (_) (hash 'connections 0 'tool_calls 0 'tool_success 0 'tool_failures 0 'clients (hash)))])
-                      (mcp-get-session-stats)))
+  (define primary-model
+    (if (hash-empty? session-model-usage)
+        (model-param)
+        (car (argmax (λ (p) (hash-ref (cdr p) 'calls 0))
+                     (hash->list session-model-usage)))))
   
-  (define lifetime-tools (with-handlers ([exn:fail? (λ (_) (make-hash))])
-                           (get-tool-stats)))
-
+  (define tool-usage-sym
+    (for/hasheq ([(k v) (in-hash session-tool-usage)])
+      (values (if (symbol? k) k (string->symbol (~a k))) v)))
+  
+  (define stats
+    (hasheq 'session-id (or (session-get-last) "unknown")
+            'model (~a primary-model)
+            'total-cost total-session-cost
+            'total-tokens total-tokens
+            'input-tokens session-input-tokens
+            'output-tokens session-output-tokens
+            'duration-seconds duration
+            'tool-usage tool-usage-sym
+            'token-history '()))
+  
   (newline)
-  (displayln "───────────────────────────── Session Summary ─────────────────────────────")
-  (printf "Duration        ~a~n" (format-duration duration))
-  (printf "Turns           ~a~n" session-turn-count)
-  (newline)
-
-  (unless (hash-empty? session-model-usage)
-    (displayln "Model Usage:")
-    (for ([(model stats) (in-hash session-model-usage)])
-      (printf "  ~a    ~a calls   ~a in · ~a out   $~a~n"
-              (~a model #:width 16)
-              (hash-ref stats 'calls)
-              (format-number (hash-ref stats 'in))
-              (format-number (hash-ref stats 'out))
-              (real->decimal-string (hash-ref stats 'cost) 4)))
-    (newline))
-
-  (printf "Tokens          ~a input   ~a output   ~a total~n"
-          (format-number session-input-tokens)
-          (format-number session-output-tokens)
-          (format-number total-tokens))
-  (printf "Cost            $~a~n" (real->decimal-string total-session-cost 4))
-  (newline)
-
-  (unless (hash-empty? session-tool-usage)
-    (displayln "Tools Used:")
-    (define sorted-tools (sort (hash->list session-tool-usage) > #:key cdr))
-    (for ([tool-pair (take sorted-tools (min 10 (length sorted-tools)))])
-      (define name (car tool-pair))
-      (define count (cdr tool-pair))
-      (define lifetime (hash-ref lifetime-tools name 0))
-      (printf "  ~a  ~a call~a~a~n"
-              (~a name #:width 20)
-              count
-              (if (= count 1) "" "s")
-              (if (> lifetime 0) (format "   (~a lifetime)" lifetime) "")))
-    (when (> (length sorted-tools) 10)
-      (printf "  ... and ~a more tools~n" (- (length sorted-tools) 10)))
-    (newline))
-
-  (when (> (hash-ref mcp-stats 'connections 0) 0)
-    (displayln "MCP:")
-    (define clients (hash-ref mcp-stats 'clients (hash)))
-    (unless (hash-empty? clients)
-      (printf "  Clients: ~a~n"
-              (string-join (for/list ([(name stats) (in-hash clients)])
-                             (format "~a (~a)" name (hash-ref stats 'calls 0)))
-                           ", ")))
-    (printf "  Tool calls: ~a total   ~a success · ~a failure~n"
-            (hash-ref mcp-stats 'tool_calls 0)
-            (hash-ref mcp-stats 'tool_success 0)
-            (hash-ref mcp-stats 'tool_failures 0))
-    (when (> (hash-ref mcp-stats 'connection_failures 0) 0)
-      (printf "  Connection failures: ~a~n" (hash-ref mcp-stats 'connection_failures 0)))
-    (newline))
-
-  (displayln "──────────────────────────────────────────────────────────────────────────"))
+  (render-session-summary stats))
 
 (define (handle-slash-command cmd input #:run-turn [run-turn #f] #:fetch-models [fetch-models #f])
   (with-handlers ([exn:fail? (λ (e)
-                               (eprintf "[ERROR] Command failed: ~a~n" (exn-message e))
-                               (eprintf "Type /help for available commands.~n"))])
+                               (error-box (exn-message e)
+                                          #:title "Command Failed"
+                                          #:suggestions '("Type /help for available commands")))])
     (match cmd
       [(or "exit" "quit") (print-session-summary!) (displayln "Goodbye.") (exit)]
       ["help" (displayln "Commands:
@@ -207,7 +173,15 @@
   /thread list|new|switch  - Manage threads
   /workflows         - List workflows
   /lsp [list|start|stop|status] - Manage LSP servers
-  /init              - Initialize project agents.md")]
+  /init              - Initialize project agents.md
+  /history           - View previous commands
+  /history <n>       - Re-run command number n
+  /queue             - List queued tasks
+  /queue <task>      - Add task to queue
+  /queue clear       - Clear all queued tasks
+  /queue pop         - Remove next queued task
+
+Tip: Use ↑/↓ arrow keys to navigate command history.")]
       ["raco"
        (if (>= (string-length input) 6)
            (system (format "raco ~a" (substring input 6)))
@@ -440,23 +414,37 @@
                   (printf "\nUse '/models <query>' to search models.\n")
                   (printf "Use '/config model <name>' to set a model.\n")))]
            [else
-            ;; With query - fuzzy search
-            (printf "Searching models for: ~a\n" rest)
-            (define results (fuzzy-search-models rest))
-            (if (null? results)
-                (printf "No matching models found.\n")
-                (begin
-                  (printf "\nMatching Models:\n")
-                  (for ([result (in-list results)])
-                    (define score (car result))
-                    (define caps (cdr result))
-                    (define id (ModelCapabilities-id caps))
-                    (printf "  - ~a" id)
-                    (when (> score 0)
-                      (printf " (relevance: ~a)" score))
-                    (newline))
-                  (printf "\nUse '/config model <name>' to set a model.\n")))]))
-      ]
+             ;; With query - fuzzy search
+             ;; First, ensure model registry is initialized with models from the endpoint
+             (printf "Searching models for: ~a\n" rest)
+             (define available-models (list-available-models))
+             (when (null? available-models)
+               (printf "Initializing model registry...\n")
+               (with-handlers ([exn:fail? (λ (e) 
+                                            (log-debug 1 'models "Failed to init registry: ~a" (exn-message e)))])
+                 (define fetched (fetch-models-from-endpoint (base-url-param) api-key))
+                 (for ([m (in-list fetched)])
+                   (define model-id (cond
+                                     [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
+                                     [(string? m) m]
+                                     [else #f]))
+                   (when model-id
+                     (register-model! model-id)))))
+             (define results (fuzzy-search-models rest))
+             (if (null? results)
+                 (printf "No matching models found. Try '/models' to list all available models first.\n")
+                 (begin
+                   (printf "\nMatching Models:\n")
+                   (for ([result (in-list results)])
+                     (define score (car result))
+                     (define caps (cdr result))
+                     (define id (ModelCapabilities-id caps))
+                     (printf "  - ~a" id)
+                     (when (> score 0)
+                       (printf " (relevance: ~a)" score))
+                     (newline))
+                   (printf "\nUse '/config model <name>' to set a model.\n")))]))
+           ]
 
       ["workflows"
        (define rest (if (>= (string-length input) 10)
@@ -612,8 +600,70 @@ EOF
          )
        (when run-turn
          (run-turn "cli" init-prompt (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f)))]
-      [_
-       (define candidates '("exit" "quit" "help" "raco" "config" "models" "workflows" "init" "lsp"))
+
+       ["history"
+       (define rest (if (>= (string-length input) 8)
+                       (string-trim (substring input 8))
+                       ""))
+       (define hist (command-history))
+       (cond
+        [(string=? rest "")
+         (if (null? hist)
+             (displayln "No command history.")
+             (begin
+               (displayln "\nCommand History (most recent first):")
+               (for ([cmd (in-list hist)]
+                     [i (in-naturals 1)])
+                 (printf "  ~a. ~a~n" i cmd))
+               (displayln "\nUse '/history <n>' to re-run command n.")))]
+        [else
+         (define n (string->number rest))
+         (if (and n (> n 0) (<= n (length hist)))
+             (let ([cmd-to-run (list-ref hist (sub1 n))])
+               (printf "Re-running: ~a~n" cmd-to-run)
+               (when run-turn
+                 (run-turn "cli" cmd-to-run (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))))
+             (printf "Invalid history index. Use 1 to ~a.~n" (length hist)))])]
+
+       ["queue"
+       (define rest (if (>= (string-length input) 6)
+                       (string-trim (substring input 6))
+                       ""))
+       (define parts (if (> (string-length rest) 0)
+                        (string-split rest #:trim? #f)
+                        '()))
+       (cond
+        [(null? parts)
+         (define q (list-queue))
+         (if (null? q)
+             (displayln "Queue is empty. Use '/queue <task>' to add tasks.")
+             (begin
+               (displayln "\nQueued Tasks:")
+               (for ([task (in-list q)]
+                     [i (in-naturals 1)])
+                 (printf "  ~a. ~a~n" i task))
+               (displayln "\nTasks will be processed in order after current work completes.")))]
+        [(equal? (first parts) "clear")
+         (clear-queue!)
+         (displayln "Queue cleared.")]
+        [(equal? (first parts) "pop")
+         (define task (get-next-queued!))
+         (if task
+             (printf "Removed from queue: ~a~n" task)
+             (displayln "Queue is empty."))]
+        [(and (equal? (first parts) "remove") (= (length parts) 2))
+         (define n (string->number (second parts)))
+         (if (and n (remove-queue-item! (sub1 n)))
+             (printf "Removed item ~a from queue.~n" n)
+             (displayln "Invalid queue index."))]
+        [else
+         (define task (string-join parts " "))
+         (if (add-to-queue! task)
+             (printf "Added to queue (~a pending): ~a~n" (queue-length) task)
+             (displayln "Queue is full (max 20). Use '/queue pop' or '/queue clear'."))])]
+       
+       [_
+       (define candidates '("exit" "quit" "help" "raco" "config" "models" "workflows" "init" "lsp" "history" "queue"))
        (define suggestions (filter (λ (c) (<= (levenshtein cmd c) 2)) candidates))
        (if (not (null? suggestions))
            (printf "Unknown command '/~a'. Did you mean: /~a?\n" cmd (string-join suggestions ", /"))

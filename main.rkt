@@ -7,6 +7,11 @@
          "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt"
          "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt" "src/llm/model-registry.rkt"
          "src/stores/thread-store.rkt" "src/stores/rollback-store.rkt" "src/stores/session-stats.rkt" "src/tools/lsp-client.rkt"
+         "src/utils/terminal-style.rkt"
+         "src/utils/message-boxes.rkt"
+         "src/utils/status-bar.rkt"
+         "src/utils/session-summary-viz.rkt"
+         "src/utils/tool-visualization.rkt"
          ;; Modular imports - runtime state, commands, and REPL
          "src/core/runtime.rkt"
          "src/core/commands.rkt"
@@ -104,65 +109,69 @@
 (define (execute-tool name args)
   (log-debug 2 'tool "CALLED: ~a\n  Args: ~v" name args)
   (record-tool-call! name)
+  (define start-time (current-inexact-milliseconds))
+  (tool-start! name #:params args)
   (with-handlers ([exn:fail? (λ (e)
                                (log-debug 1 'tool "ERROR: ~a failed: ~a" name (exn-message e))
+                               (tool-error! name (exn-message e))
                                (format "Tool Error: ~a" (exn-message e)))])
-    (cond
-      [(string-prefix? name "rdf_") (execute-rdf-tool name args)]
-      [(string-prefix? name "web_") (execute-web-search name args)]
-      [(string-prefix? name "service_") (if (>= (current-security-level) 2)
-                                            (match name ["service_start" (spawn-service! (hash-ref args 'id) (hash-ref args 'cmd) api-key)]
-                                              ["service_stop" (stop-service! (hash-ref args 'id))] ["service_list" (list-services!)])
-                                            "Requires Level 2.")]
-      [else (match name
-              ["ask_human" (printf "\n[ASK]: ~a\n> " (hash-ref args 'question)) (read-line)]
-              ["ctx_evolve" (gepa-evolve! (hash-ref args 'feedback) (hash-ref args 'model (get-default-model)))]
-              ["meta_evolve" (gepa-meta-evolve! (hash-ref args 'feedback) (hash-ref args 'model (get-default-model)))]
-              ["run_racket" (run-tiered-code! (hash-ref args 'code) (current-security-level))]
-              ["read_file" (if (or (>= (current-security-level) 1) (string-contains? (hash-ref args 'path) ".agentd/workspace"))
-                               (if (file-exists? (hash-ref args 'path)) (file->string (hash-ref args 'path)) "404") "Permission Denied.")]
-              ["write_file" (if (>= (current-security-level) 2)
+    (define result
+      (cond
+        [(string-prefix? name "rdf_") (execute-rdf-tool name args)]
+        [(string-prefix? name "web_") (execute-web-search name args)]
+        [(string-prefix? name "service_") (if (>= (current-security-level) 2)
+                                              (match name ["service_start" (spawn-service! (hash-ref args 'id) (hash-ref args 'cmd) api-key)]
+                                                ["service_stop" (stop-service! (hash-ref args 'id))] ["service_list" (list-services!)])
+                                              "Requires Level 2.")]
+        [else (match name
+                ["ask_human" (printf "\n[ASK]: ~a\n> " (hash-ref args 'question)) (read-line)]
+                ["ctx_evolve" (gepa-evolve! (hash-ref args 'feedback) (hash-ref args 'model (get-default-model)))]
+                ["meta_evolve" (gepa-meta-evolve! (hash-ref args 'feedback) (hash-ref args 'model (get-default-model)))]
+                ["run_racket" (run-tiered-code! (hash-ref args 'code) (current-security-level))]
+                ["read_file" (if (or (>= (current-security-level) 1) (string-contains? (hash-ref args 'path) ".agentd/workspace"))
+                                 (if (file-exists? (hash-ref args 'path)) (file->string (hash-ref args 'path)) "404") "Permission Denied.")]
+                ["write_file" (if (>= (current-security-level) 2)
+                                  (begin
+                                    (when (< (current-security-level) 4) (confirm-risk! "WRITE" (hash-ref args 'path)))
+                                    (if (llm-judge-param)
+                                        (let-values ([(safe? reason) (evaluate-safety "write_file" (format "File: ~a\nContent:\n~a" (hash-ref args 'path) (hash-ref args 'content)))])
+                                          (if safe?
+                                              (begin (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")
+                                              (format "Security Judge Blocked Action: ~a" reason)))
+                                        (begin (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")))
+                                  "Permission Denied: Requires Level 2.")]
+                ["run_term" (if (>= (current-security-level) 3)
                                 (begin
-                                  (when (< (current-security-level) 4) (confirm-risk! "WRITE" (hash-ref args 'path)))
-                                  ;; Security Judge Check
+                                  (when (< (current-security-level) 4) (confirm-risk! "TERM" (hash-ref args 'cmd)))
                                   (if (llm-judge-param)
-                                      (let-values ([(safe? reason) (evaluate-safety "write_file" (format "File: ~a\nContent:\n~a" (hash-ref args 'path) (hash-ref args 'content)))])
+                                      (let-values ([(safe? reason) (evaluate-safety "run_term" (hash-ref args 'cmd))])
                                         (if safe?
-                                            (begin (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")
+                                            (with-output-to-string (λ () (system (hash-ref args 'cmd))))
                                             (format "Security Judge Blocked Action: ~a" reason)))
-                                      (begin (display-to-file (hash-ref args 'content) (hash-ref args 'path) #:exists 'replace) "Written.")))
-                                "Permission Denied: Requires Level 2.")]
-              ["run_term" (if (>= (current-security-level) 3)
-                              (begin
-                                (when (< (current-security-level) 4) (confirm-risk! "TERM" (hash-ref args 'cmd)))
-                                ;; Security Judge Check
-                                (if (llm-judge-param)
-                                    (let-values ([(safe? reason) (evaluate-safety "run_term" (hash-ref args 'cmd))])
-                                      (if safe?
-                                          (with-output-to-string (λ () (system (hash-ref args 'cmd))))
-                                          (format "Security Judge Blocked Action: ~a" reason)))
-                                    (with-output-to-string (λ () (system (hash-ref args 'cmd))))))
-                              "Permission Denied: Requires Level 3.")]
-              ["memory_save"
-               (vector-add! (hash-ref args 'text) api-key (base-url-param))
-               "Saved to vector memory."]
-              ["memory_recall"
-               (define results (vector-search (hash-ref args 'query) api-key (base-url-param)))
-               (format "Related memories:\n~a"
-                       (string-join (map (λ (x) (format "- [~a] ~a" (real->decimal-string (car x) 2) (cdr x))) results) "\n"))]
-              ["workflow_list" (workflow-list)]
-              ["workflow_set" (workflow-set (hash-ref args 'slug) (hash-ref args 'description) (hash-ref args 'content))]
-              ["workflow_delete" (workflow-delete (hash-ref args 'slug))]
-              ["generate_image"
-               (define gen (make-openai-image-generator #:api-key api-key #:api-base (base-url-param)))
-               (define-values (ok? url) (gen (hash-ref args 'prompt)))
-               (if ok? (format "Generated Image: ~a" url) (format "Failed: ~a" url))]
-              ["set_priority"
-               (define p (hash-ref args 'priority))
-               (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol p)])))))
-               (format "Priority set to ~a." p)]
-              [_ (format "Unknown: ~a" name)]
-              )])))
+                                      (with-output-to-string (λ () (system (hash-ref args 'cmd))))))
+                                "Permission Denied: Requires Level 3.")]
+                ["memory_save"
+                 (vector-add! (hash-ref args 'text) api-key (base-url-param))
+                 "Saved to vector memory."]
+                ["memory_recall"
+                 (define results (vector-search (hash-ref args 'query) api-key (base-url-param)))
+                 (format "Related memories:\n~a"
+                         (string-join (map (λ (x) (format "- [~a] ~a" (real->decimal-string (car x) 2) (cdr x))) results) "\n"))]
+                ["workflow_list" (workflow-list)]
+                ["workflow_set" (workflow-set (hash-ref args 'slug) (hash-ref args 'description) (hash-ref args 'content))]
+                ["workflow_delete" (workflow-delete (hash-ref args 'slug))]
+                ["generate_image"
+                 (define gen (make-openai-image-generator #:api-key api-key #:api-base (base-url-param)))
+                 (define-values (ok? url) (gen (hash-ref args 'prompt)))
+                 (if ok? (format "Generated Image: ~a" url) (format "Failed: ~a" url))]
+                ["set_priority"
+                 (define p (hash-ref args 'priority))
+                 (save-ctx! (let ([db (load-ctx)]) (hash-set db 'items (hash-set (hash-ref db 'items) (hash-ref db 'active) (struct-copy Ctx (ctx-get-active) [priority (string->symbol p)])))))
+                 (format "Priority set to ~a." p)]
+                [_ (format "Unknown: ~a" name)]
+                )]))
+    (tool-complete! name result #:duration-ms (- (current-inexact-milliseconds) start-time))
+    result))
 
 (define (get-tools mode)
   (define mem-tools (list (hash 'type "function" 'function (hash 'name "memory_save" 'parameters (hash 'type "object" 'properties (hash 'text (hash 'type "string")))))
@@ -382,7 +391,9 @@
              #:display-figlet-banner display-figlet-banner
              #:handle-new-session handle-new-session
              #:handle-slash-command main-handle-slash-command
-             #:print-session-summary! print-session-summary!))
+             #:print-session-summary! print-session-summary!
+             #:use-animated-intro? #t
+             #:api-key env-api-key))
 
 (define mode-param (make-parameter 'run))
 (command-line #:program "chrysalis"

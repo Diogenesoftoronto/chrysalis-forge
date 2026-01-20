@@ -21,7 +21,7 @@
 
 (define FRAME-DELAY-MS 150)
 (define CHECK-DELAY-MS 80)
-(define GREETING-CHAR-DELAY-MS 15)
+(define GREETING-CHAR-DELAY-MS 2)
 
 ;;; ============================================================================
 ;;; ASCII Art Logo Frames (Chrysalis/Butterfly Theme)

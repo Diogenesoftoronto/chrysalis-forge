@@ -7,15 +7,66 @@
          racket/list
          "../stores/context-store.rkt"
          "../llm/openai-client.rkt"
-         "../utils/debug.rkt")
+         "../utils/debug.rkt"
+         "../utils/terminal-style.rkt"
+         "../utils/intro-animation.rkt"
+         "./command-queue.rkt")
 
 (provide repl-loop
          read-multiline-input
          with-raw-terminal
          generate-session-title
-         current-run-turn)
+         current-run-turn
+         command-history
+         command-history-index
+         add-to-command-history!
+         navigate-history
+         get-history-item)
 
 (define current-run-turn (make-parameter #f))
+
+;; Command History System
+(define command-history (make-parameter '()))
+(define command-history-index (make-parameter -1))
+(define current-line-buffer (make-parameter ""))
+(define MAX-HISTORY 100)
+
+(define (add-to-command-history! cmd)
+  (define trimmed (string-trim cmd))
+  (when (> (string-length trimmed) 0)
+    (define current (command-history))
+    (define new-history
+      (if (and (not (null? current))
+               (equal? trimmed (first current)))
+          current
+          (take (cons trimmed current) (min (add1 (length current)) MAX-HISTORY))))
+    (command-history new-history)
+    (command-history-index -1)))
+
+(define (navigate-history direction current-input)
+  (define hist (command-history))
+  (when (null? hist)
+    (command-history-index -1))
+  (define current-idx (command-history-index))
+  (when (= current-idx -1)
+    (current-line-buffer current-input))
+  (define new-idx
+    (cond
+      [(= direction -1) (min (sub1 (length hist)) (add1 current-idx))]
+      [(= direction 1) (max -1 (sub1 current-idx))]
+      [else current-idx]))
+  (command-history-index new-idx)
+  (if (= new-idx -1)
+      (current-line-buffer)
+      (if (< new-idx (length hist))
+          (list-ref hist new-idx)
+          (current-line-buffer))))
+
+(define (get-history-item n)
+  (define hist (command-history))
+  (if (and (>= n 0) (< n (length hist)))
+      (list-ref hist n)
+      #f))
 
 (define (with-raw-terminal thunk)
   (define old-settings (with-output-to-string (λ () (system "stty -g"))))
@@ -63,6 +114,24 @@
                     [(or (equal? seq "13;2u") (equal? seq "27;2;13~"))
                      (display "\n...   ") (flush-output)
                      (loop (cons #\newline chars) in-paste?)]
+                    [(equal? seq "A")
+                     (define current-input (list->string (reverse chars)))
+                     (define prev (navigate-history -1 current-input))
+                     (when prev
+                       (for ([_ (in-range (length chars))])
+                         (display "\b \b"))
+                       (display prev)
+                       (flush-output))
+                     (loop (if prev (reverse (string->list prev)) chars) in-paste?)]
+                    [(equal? seq "B")
+                     (define current-input (list->string (reverse chars)))
+                     (define next-hist (navigate-history 1 current-input))
+                     (when next-hist
+                       (for ([_ (in-range (length chars))])
+                         (display "\b \b"))
+                       (display next-hist)
+                       (flush-output))
+                     (loop (if next-hist (reverse (string->list next-hist)) chars) in-paste?)]
                     [else (loop chars in-paste?)])]
                  [(char=? next #\return)
                   (display "\n...   ") (flush-output)
@@ -137,7 +206,9 @@
                    #:display-figlet-banner display-figlet-banner
                    #:handle-new-session handle-new-session
                    #:handle-slash-command handle-slash-command
-                   #:print-session-summary! print-session-summary!)
+                   #:print-session-summary! print-session-summary!
+                   #:use-animated-intro? [use-animated-intro? #t]
+                   #:api-key [api-key-for-checks #f])
   (parameterize ([current-run-turn run-turn])
     (check-env-verbose!)
     (verify-env! #:fail #f)
@@ -157,9 +228,18 @@
        (define new-id (create-new-session!))
        (printf "Started new session: ~a\n" new-id)])
     
-    (display-figlet-banner "chrysalis forge" "standard")
-    (newline)
-    (displayln "Type /exit to leave or /help for commands.")
+    ;; Show animated intro or fallback to figlet banner
+    (if use-animated-intro?
+        (let* ([api-check (if api-key-for-checks 'ok 'warn)]
+               [checks (list (cons "API Key" api-check)
+                             (cons "Environment" 'ok))])
+          (play-intro! #:fast? #f
+                       #:checks checks
+                       #:tip "Use ↑/↓ to navigate history, /help for commands"))
+        (begin
+          (display-figlet-banner "chrysalis forge" "standard")
+          (newline)
+          (displayln "Type /exit to leave or /help for commands.")))
     (handle-new-session "cli" "code")
     
     (define first-message? (box #t))
@@ -197,16 +277,25 @@
               (define cmd (first (string-split (substring input 1))))
               (handle-slash-command cmd input)]
              [else
-              (with-handlers ([exn:fail? (λ (e)
-                                           (eprintf "\n[ERROR] ~a\n" (exn-message e))
-                                           (eprintf "The REPL will continue. Use /models to list available models.\n"))])
-                (when (unbox first-message?)
-                  (set-box! first-message? #f)
-                  (define db (load-ctx))
-                  (define active-name (hash-ref db 'active))
-                  (define title (generate-session-title input))
-                  (when title
-                    (session-update-title! active-name title)
-                    (log-debug 1 'session "Generated session title: ~a" title)))
-                (run-turn "cli" input (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f)))])
-           (loop)])))))
+               (with-handlers ([exn:fail? (λ (e)
+                                            (eprintf "\n[ERROR] ~a\n" (exn-message e))
+                                            (eprintf "The REPL will continue. Use /models to list available models.\n"))])
+                 (add-to-command-history! input)
+                 (when (unbox first-message?)
+                   (set-box! first-message? #f)
+                   (define db (load-ctx))
+                   (define active-name (hash-ref db 'active))
+                   (define title (generate-session-title input))
+                   (when title
+                     (session-update-title! active-name title)
+                     (log-debug 1 'session "Generated session title: ~a" title)))
+                 (run-turn "cli" input (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))
+                 ;; Process queued tasks after each turn
+                 (let process-queue ()
+                   (define next-task (get-next-queued!))
+                   (when next-task
+                     (printf "\n[Processing queued task]: ~a\n" next-task)
+                     (add-to-command-history! next-task)
+                     (run-turn "cli" next-task (λ (s) (display s) (flush-output)) (λ (_) (void)) (λ () #f))
+                     (process-queue))))])
+             (loop)])))))
