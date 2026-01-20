@@ -92,8 +92,9 @@
     ;; Position container at top-right of parent
     (define/private (position-container!)
       (ensure-container!)
-      (define-values (px py) (send parent get-position))
-      (define-values (pw _ph) (send parent get-size))
+      (define px (send parent get-x))
+      (define py (send parent get-y))
+      (define pw (send parent get-width))
       (define x (- (+ px pw) TOAST-WIDTH TOAST-MARGIN))
       (define y (+ py TOAST-MARGIN))
       (send toast-container move x y))
@@ -168,7 +169,7 @@
     ;; Public: Show a toast notification
     (define/public (show-toast type message [duration DEFAULT-DURATION])
       (if (< (length active-toasts) 5)
-          (send this do-create-toast type message duration)
+          (do-create-toast type message duration)
           (set! queue (append queue (list (list type message duration))))))
     
     ;; Internal method wrapper for create-toast
