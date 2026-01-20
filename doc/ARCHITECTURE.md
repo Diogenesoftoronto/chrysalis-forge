@@ -18,7 +18,11 @@ Chrysalis Forge is organized into four distinct layers, each with a clear respon
 │      runtime.rkt      │     commands.rkt     │       repl.rkt          │
 │   Shared parameters   │   Slash commands &   │   REPL loop &           │
 │     & helpers         │   session helpers    │   terminal handling     │
-├─────────────────────────────────────────────────────────────────────────┤
+├──────────────────────────────┬──────────────────────────────────────────┤
+│         src/gui/             │              src/utils/                  │
+│   GUI: themes, widgets,      │   CLI visuals: colors, spinners,        │
+│   chat, notifications        │   message boxes, animations             │
+├──────────────────────────────┴──────────────────────────────────────────┤
 │                            src/core/                                    │
 │         Orchestration: decomposition, optimization, sub-agents          │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -511,6 +515,77 @@ The streaming response handler provides real-time output while accumulating tool
 ```
 
 This streaming approach is essential for user experience. Rather than waiting for the entire response, users see output as it's generated, with tool calls processed as they complete.
+
+---
+
+## The Visual Layer: CLI and GUI Enhancements
+
+Chrysalis Forge provides rich visual feedback through two complementary systems: CLI terminal styling and GUI themed widgets.
+
+### CLI Visual Modules (`src/utils/`)
+
+The CLI visual layer provides terminal-based styling and animations:
+
+| Module | Purpose |
+|--------|---------|
+| `terminal-style.rkt` | ANSI colors, text formatting, themes (default, cyberpunk, dracula, etc.) |
+| `loading-animations.rkt` | Multi-style spinners (dots, blocks, arrows) and progress bars |
+| `message-boxes.rkt` | Styled boxes with Unicode borders for errors, warnings, success |
+| `tool-visualization.rkt` | Visual feedback during tool execution with timing |
+| `stream-effects.rkt` | Typewriter effects and markdown formatting for streaming output |
+| `intro-animation.rkt` | Animated ASCII art startup sequence |
+| `status-bar.rkt` | Persistent bottom bar showing session metrics |
+| `session-summary-viz.rkt` | Sparklines and bar charts for session statistics |
+| `theme-manager.rkt` | CLI theme configuration and persistence |
+
+The color system auto-detects terminal capabilities via `TERM` environment variable and respects `NO_COLOR` for accessibility. Example usage:
+
+```racket
+(require "src/utils/terminal-style.rkt")
+(displayln (error-message "Something went wrong"))  ; Red ✗ prefix
+(displayln (success-message "Operation complete"))  ; Green ✓ prefix
+(displayln (styled "Custom" #:fg 'cyan #:bold? #t))
+```
+
+Tool execution provides visual feedback:
+
+```racket
+(require "src/utils/tool-visualization.rkt")
+(with-tool-viz "read_file" (hash 'path "/etc/hosts")
+  (file->string "/etc/hosts"))
+;; Shows: ⠋ 📄 read_file (path: /etc/hosts)
+;; Then:  ✓ 📄 read_file [42ms]
+```
+
+### GUI Visual Modules (`src/gui/`)
+
+The GUI layer provides modern widget styling and animations:
+
+| Module | Purpose |
+|--------|---------|
+| `theme-system.rkt` | Theme management with 6 built-in themes, hex-to-color conversion |
+| `chat-widget.rkt` | Enhanced chat with message bubbles, streaming cursor, code blocks |
+| `widget-framework.rkt` | Modern styled button, text field, choice widgets with hover effects |
+| `notification-system.rkt` | Toast notifications (info, success, warning, error) |
+| `animation-engine.rkt` | Tween animations with easing functions (60fps target) |
+
+Themes are persisted to `~/.config/chrysalis-forge/theme.json` and can be switched at runtime:
+
+```racket
+(require "src/gui/theme-system.rkt")
+(load-theme 'cyberpunk)
+(theme-ref 'accent)  ; Returns color% object
+```
+
+The chat widget supports streaming LLM responses with a blinking cursor:
+
+```racket
+(require "src/gui/chat-widget.rkt")
+(define chat (make-chat-widget parent))
+(send chat append-streaming-chunk "Hello ")
+(send chat append-streaming-chunk "world!")
+(send chat finish-streaming)
+```
 
 ---
 

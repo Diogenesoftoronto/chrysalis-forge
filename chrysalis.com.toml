@@ -1,9 +1,9 @@
 # Schema defined in agent_schema.py
 # Chrysalis Forge - Evolvable Racket Agent Framework
 
-identity = "chrysalis-forge.agentd"
-name = "Chrysalis Forge (agentd)"
-short_name = "agentd"
+identity = "chrysalis-forge.chrysalis"
+name = "Chrysalis Forge (chrysalis)"
+short_name = "chrysalis"
 url = "https://github.com/diogenes/chrysalis-forge"
 protocol = "acp"
 author_name = "Diogenes"
@@ -13,10 +13,10 @@ publisher_url = "https://github.com/diogenes"
 type = "coding"
 description = "Self-evolving Racket agent with MAP-Elites optimization, natural language priority selection, and tiered security sandboxing."
 tags = ["racket", "self-evolving", "map-elites", "dspy", "agentic"]
-run_command."*" = "/home/diogenes/.local/share/racket/9.0/bin/agentd --acp"
+run_command."*" = "/home/diogenes/.local/share/racket/9.0/bin/chrysalis --acp"
 
 help = '''
-# Chrysalis Forge (agentd)
+# Chrysalis Forge (chrysalis)
 
 An evolvable, safety-gated Racket agent framework with DSPy-style optimization and self-improving capabilities.
 
@@ -39,14 +39,14 @@ An evolvable, safety-gated Racket agent framework with DSPy-style optimization a
 
 ```bash
 # Interactive mode
-agentd -i
+chrysalis -i
 
 # CLI with natural language priority
-agentd --priority "cheap and fast" "Summarize this file"
-agentd --priority accurate "Review this code for security issues"
+chrysalis --priority "cheap and fast" "Summarize this file"
+chrysalis --priority accurate "Review this code for security issues"
 
 # Security levels
-agentd --perms god "Full access mode"
+chrysalis --perms god "Full access mode"
 ```
 
 ---
@@ -63,9 +63,9 @@ command = "cp .env.example .env && echo 'Edit .env to add your OPENAI_API_KEY'"
 description = "Create environment file from template"
 
 [actions."*".interactive]
-command = "agentd -i"
+command = "chrysalis -i"
 description = "Start interactive REPL mode"
 
 [actions."*".init_project]
-command = "agentd /init"
+command = "chrysalis /init"
 description = "Initialize agents.md for current project"

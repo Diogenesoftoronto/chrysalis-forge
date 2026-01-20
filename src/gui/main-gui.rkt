@@ -6,7 +6,12 @@
          "../utils/dotenv.rkt"
          "../llm/model-registry.rkt"
          "../llm/pricing-model.rkt"
-         "../core/workflow-engine.rkt")
+         "../core/workflow-engine.rkt"
+         "theme-system.rkt"
+         "chat-widget.rkt"
+         "widget-framework.rkt"
+         "notification-system.rkt"
+         "animation-engine.rkt")
 
 (provide run-gui!)
 
@@ -33,16 +38,16 @@
 (define gui-pretty (make-parameter (or (getenv "PRETTY") "none")))
 
 ;; ============================================================================
-;; Theme Colors
+;; Theme Colors (now via theme-system.rkt)
 ;; ============================================================================
 
-(define bg-color (make-object color% 30 30 35))
-(define fg-color (make-object color% 220 220 220))
-(define accent-color (make-object color% 100 149 237))
-(define user-msg-bg (make-object color% 45 45 55))
-(define assistant-msg-bg (make-object color% 35 50 60))
-(define input-bg (make-object color% 40 40 48))
-(define button-bg (make-object color% 60 60 70))
+(define (bg-color) (theme-ref 'bg))
+(define (fg-color) (theme-ref 'fg))
+(define (accent-color) (theme-ref 'accent))
+(define (user-msg-bg) (theme-ref 'user-msg-bg))
+(define (assistant-msg-bg) (theme-ref 'assistant-msg-bg))
+(define (input-bg) (theme-ref 'input-bg))
+(define (button-bg) (theme-ref 'button-bg))
 
 ;; ============================================================================
 ;; Main Frame
@@ -54,6 +59,18 @@
        [width 900]
        [height 700]
        [style '(fullscreen-button)]))
+
+;; ============================================================================
+;; Notification Manager & Animation Engine
+;; ============================================================================
+
+(define notif-manager (make-notification-manager main-frame))
+(define anim-manager (make-animation-manager))
+
+;; Refresh theme colors across the UI
+(define (refresh-theme-colors!)
+  (apply-theme! main-frame)
+  (send main-frame refresh))
 
 ;; ============================================================================
 ;; Menu Bar
@@ -100,6 +117,20 @@
            [label "Initialize Project"]
            [parent tools-menu]
            [callback (λ (item event) (init-project!))]))
+(void (new separator-menu-item% [parent tools-menu]))
+
+;; Theme submenu
+(define theme-menu (new menu% [label "Theme"] [parent tools-menu]))
+(for ([theme-name (in-list (list-themes))])
+  (new menu-item%
+       [label (string-titlecase (symbol->string theme-name))]
+       [parent theme-menu]
+       [callback (λ (item event)
+                   (load-theme theme-name)
+                   (save-theme-preference! theme-name)
+                   (refresh-theme-colors!)
+                   (show-notification! notif-manager 'success 
+                                       (format "Theme changed to ~a" theme-name)))]))
 
 (define help-menu (new menu% [label "&Help"] [parent menu-bar]))
 (void (new menu-item%
@@ -448,7 +479,9 @@
   (when path
     (define content (file->string path))
     (set-box! current-attachments (cons (list 'file (path->string path) content) (unbox current-attachments)))
-    (set-status! (format "Attached: ~a" (file-name-from-path path)))))
+    (define filename (path->string (file-name-from-path path)))
+    (set-status! (format "Attached: ~a" filename))
+    (show-notification! notif-manager 'info (format "Attached: ~a" filename) #:duration 2000)))
 
 (define (send-user-message!)
   (define content (send input-text get-text))
@@ -525,7 +558,12 @@
                           (queue-callback
                            (λ ()
                              (append-message! 'system (format "Error: ~a" (exn-message e)))
-                             (set-status! "Error"))))])
+                             (set-status! "Error")
+                             (show-notification! notif-manager 'error 
+                                                 (format "Request failed: ~a" 
+                                                         (if (> (string-length (exn-message e)) 50)
+                                                             (string-append (substring (exn-message e) 0 50) "...")
+                                                             (exn-message e)))))))])
          (process-message! content))))))
 
 (define (process-message! content)
@@ -630,7 +668,8 @@
       (queue-callback
        (λ ()
          (append-message! 'system (format "API Error: ~a" result))
-         (set-status! "Error")))))
+         (set-status! "Error")
+         (show-notification! notif-manager 'error "API request failed")))))
 
 ;; ============================================================================
 ;; Session Management
@@ -694,9 +733,10 @@
                            (session-create! session-name mode #:id session-id)
                            (session-switch! session-name)))
                      (set-box! first-message-sent? #f) ; Reset for new session
-                     (update-session-label!)
-                     (clear-chat!)
-                     (send dialog show #f)))])
+                      (update-session-label!)
+                      (clear-chat!)
+                      (show-notification! notif-manager 'success "New session created")
+                      (send dialog show #f)))])
   
   (send dialog show #t))
 
@@ -763,10 +803,11 @@
                                                       dialog
                                                       '(yes-no caution)))
                            (with-handlers ([exn:fail?
-                                            (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
-                             (session-delete! name)
-                             (send dialog show #f)
-                             (show-session-chooser!))))))])
+                                             (λ (e) (message-box "Error" (exn-message e) dialog '(ok stop)))])
+                              (session-delete! name)
+                              (show-notification! notif-manager 'warning "Session deleted")
+                              (send dialog show #f)
+                              (show-session-chooser!))))))])
   
   (new button%
        [parent button-panel]
@@ -781,11 +822,14 @@
                    (when sel
                      (define session (list-ref sorted-sessions sel))
                      (define name (hash-ref session 'name))
+                     (define title (hash-ref session 'title))
                      (session-switch! name)
                      (set-box! first-message-sent? #f) ; Reset for switched session
                      (update-session-label!)
                      (clear-chat!)
                      (load-chat-history!)
+                     (show-notification! notif-manager 'success 
+                                         (format "Switched to ~a" (or title name)))
                      (send dialog show #f)))])
   
   (send dialog show #t))
@@ -1130,6 +1174,10 @@ EOF
 (define (run-gui!)
   (load-dotenv!)
   
+  ;; Theme is already loaded by theme-system.rkt init-theme!
+  ;; Apply to frame on startup
+  (refresh-theme-colors!)
+  
   ;; Always create a new session on startup (don't reuse old sessions)
   ;; Users can explicitly resume sessions via the session chooser
   (define session-id (generate-session-id))
@@ -1143,8 +1191,14 @@ EOF
   ;; Populate models list (same source as TUI `/models`)
   (refresh-models!)
   
-  ;; Welcome message
-  (append-message! 'system "Welcome to Chrysalis Forge!\n\nType your message and press Enter to send.\nUse the toolbar to change models or modes.")
+  ;; Welcome message with current theme info
+  (define current-theme-name (hash-ref (current-gui-theme) 'name 'dark))
+  (append-message! 'system 
+                   (format "Welcome to Chrysalis Forge!\n\nType your message and press Enter to send.\nUse the toolbar to change models or modes.\n\nTheme: ~a (change via Tools → Theme)"
+                           current-theme-name))
+  
+  ;; Show welcome notification
+  (show-notification! notif-manager 'info "Ready to assist!" #:duration 2000)
   
   ;; Don't load old history - start fresh each time
   ;; Users can explicitly resume sessions via the session chooser
