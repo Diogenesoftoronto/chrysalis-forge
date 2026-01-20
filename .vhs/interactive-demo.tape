@@ -10,6 +10,14 @@ Type "chrysalis -i"
 Enter
 Sleep 1s
 
+# Use a fast model for the demo
+Type "/config model glm-4.5-air"
+Enter
+Sleep 0.8s
+Type "/priority fast"
+Enter
+Sleep 0.6s
+
 # Show config list
 Type "/config list"
 Enter

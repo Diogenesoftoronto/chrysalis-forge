@@ -6,6 +6,6 @@ Set Theme "catppuccin-mocha"
 Set Shell "bash"
 
 # ONE feature: Simple CLI task execution
-Type "chrysalis 'What is 2+2? Explain briefly.'"
+Type "chrysalis --model glm-4.5-air --priority fast 'What is 2+2? Explain briefly.'"
 Enter
-Sleep 5s
+Sleep 8s

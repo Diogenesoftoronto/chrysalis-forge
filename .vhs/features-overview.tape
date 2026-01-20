@@ -12,6 +12,6 @@ Sleep 2s
 Type "echo ''"
 Enter
 Sleep 0.5s
-Type "chrysalis --priority fast 'Write a haiku about coding'"
+Type "chrysalis --model glm-4.5-air --priority fast 'Write a haiku about coding'"
 Enter
-Sleep 5s
+Sleep 8s

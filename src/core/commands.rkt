@@ -411,24 +411,52 @@
          (attachments (cons (list 'image path) (attachments)))
          (printf "Attached image: ~a\n" path))]
       ["models"
-       (printf "Fetching available models from ~a...\n" (base-url-param))
-       (with-handlers ([exn:fail? (λ (e)
-                                    (eprintf "[ERROR] Failed to fetch models: ~a\n" (exn-message e))
-                                    (eprintf "Check your API endpoint and key configuration.\n"))])
-         (define models (if fetch-models 
-                            (fetch-models (base-url-param) api-key)
-                            (fetch-models-from-endpoint (base-url-param) api-key)))
-         (if (null? models)
-             (printf "No models found. The API endpoint may not support model listing.\n")
-             (begin
-               (printf "\nAvailable Models:\n")
-               (for ([m models])
-                 (define model-id (cond
-                                    [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
-                                    [(string? m) m]
-                                    [else "unknown"]))
-                 (printf "  - ~a\n" model-id))
-               (printf "\nUse '/config model <name>' to set a model.\n"))))]
+       (define rest (if (>= (string-length input) 8)
+                        (string-trim (substring input 8))
+                        ""))
+       (with-handlers ([exn:fail?
+                        (λ (e)
+                          (eprintf "[ERROR] Failed to fetch models: ~a\n" (exn-message e))
+                          (eprintf "Check your API endpoint and key configuration.\n"))])
+         (cond
+           [(string=? rest "")
+            ;; No query - list all models
+            (printf "Fetching available models from ~a...\n" (base-url-param))
+            (define models
+              (if fetch-models
+                  (fetch-models (base-url-param) api-key)
+                  (fetch-models-from-endpoint (base-url-param) api-key)))
+            (if (null? models)
+                (printf "No models found. The API endpoint may not support model listing.\n")
+                (begin
+                  (printf "\nAvailable Models:\n")
+                  (for ([m models])
+                    (define model-id
+                      (cond
+                        [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
+                        [(string? m) m]
+                        [else "unknown"]))
+                    (printf "  - ~a\n" model-id))
+                  (printf "\nUse '/models <query>' to search models.\n")
+                  (printf "Use '/config model <name>' to set a model.\n")))]
+           [else
+            ;; With query - fuzzy search
+            (printf "Searching models for: ~a\n" rest)
+            (define results (fuzzy-search-models rest))
+            (if (null? results)
+                (printf "No matching models found.\n")
+                (begin
+                  (printf "\nMatching Models:\n")
+                  (for ([result (in-list results)])
+                    (define score (car result))
+                    (define caps (cdr result))
+                    (define id (ModelCapabilities-id caps))
+                    (printf "  - ~a" id)
+                    (when (> score 0)
+                      (printf " (relevance: ~a)" score))
+                    (newline))
+                  (printf "\nUse '/config model <name>' to set a model.\n")))]))
+      ]
 
       ["workflows"
        (define rest (if (>= (string-length input) 10)

@@ -6,6 +6,6 @@ Set Theme "catppuccin-mocha"
 Set Shell "bash"
 
 # ONE feature: Natural language priority selection
-Type "chrysalis --priority 'in a hurry' 'Write a haiku about coding'"
+Type "chrysalis --model glm-4.5-air --priority 'in a hurry' 'Write a haiku about coding'"
 Enter
-Sleep 5s
+Sleep 8s

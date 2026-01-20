@@ -18,7 +18,13 @@ This directory contains [vhs](https://github.com/charmbracelet/vhs) scripts for 
 
 ## Regenerating GIFs
 
-**Note**: The scripts automatically install the package using `raco pkg install --auto` at the start, so the `chrysalis` command will be available. The scripts assume they are run from the project root directory (or the `.vhs` subdirectory).
+**Note**: The scripts install the package using `raco pkg install --auto --skip-installed` at the start, so the `chrysalis` launcher will be available (via whatever Racket install is on your `PATH`). The scripts assume they are run from the project root directory (or the `.vhs` subdirectory).
+
+## Model + timing notes
+
+- **Model used in tapes**: `glm-4.5-air` (set via `--model` or `/config model`).
+- **API endpoint**: `chrysalis` uses `OPENAI_API_BASE` and `OPENAI_API_KEY` (or your provider’s equivalents) to talk to an OpenAI-compatible API. If `/models` fails, your endpoint may not support model listing.
+- **Wait tuning**: the tapes currently use conservative `Sleep 8s` waits for agent responses. If your environment is faster/slower, adjust those `Sleep` values.
 
 To regenerate all GIFs:
 

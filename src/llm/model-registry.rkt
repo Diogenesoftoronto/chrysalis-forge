@@ -10,7 +10,8 @@
          racket/path
          racket/port
          "pricing-model.rkt"
-         "../utils/debug.rkt")
+         "../utils/debug.rkt"
+         "../core/runtime.rkt")
 
 (provide (struct-out ModelCapabilities)
          (struct-out ModelStats)
@@ -30,7 +31,8 @@
          get-model-success-rate
          save-model-stats!
          load-model-stats!
-         detect-provider)
+         detect-provider
+         fuzzy-search-models)
 
 (struct ModelCapabilities
   (id provider max-context reasoning coding speed cost-tier
@@ -534,5 +536,28 @@
           (define existing (hash-ref model-registry id-str #f))
           (when existing
             (hash-set! model-registry id-str
-                       (struct-copy ModelRecord existing 
+                       (struct-copy ModelRecord existing
                                     [stats (json-to-stats stats-json)]))))))))
+
+;; Fuzzy search for models using Levenshtein distance
+(define (fuzzy-search-models query #:max-results [max-results 20])
+  (define query-lower (string-downcase (string-trim query)))
+  (define all-models (list-available-models))
+  
+  (define scored-models
+    (for/list ([record (in-list all-models)])
+      (define caps (ModelRecord-caps record))
+      (define id (ModelCapabilities-id caps))
+      (define id-lower (string-downcase id))
+      (define score
+        (cond
+          [(string=? id-lower query-lower) 0]
+          [(string-prefix? id-lower query-lower) 10]
+          [(string-contains? id-lower query-lower) 20]
+          [else
+           (define distance (levenshtein id-lower query-lower))
+           (+ 50 (* distance 2))]))
+      (cons score caps)))
+  
+  (define sorted (sort scored-models < #:key car))
+  (take sorted (min max-results (length sorted))))
