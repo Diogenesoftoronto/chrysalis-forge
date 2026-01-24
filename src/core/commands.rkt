@@ -22,7 +22,7 @@
          "./repl.rkt"
          "../utils/debug.rkt"
          "../utils/session-summary-viz.rkt"
-         "../utils/message-boxes.rkt")
+         "../tui/compat/legacy-boxes.rkt")
 
 (provide handle-slash-command
          create-new-session!
@@ -32,7 +32,13 @@
          list-threads!
          display-figlet-banner
          print-session-summary!
-         handle-new-session)
+         handle-new-session
+         available-slash-commands)
+
+(define available-slash-commands
+  '("help" "exit" "quit" "stats" "context" "compact" "models" "config"
+    "thread" "session" "tools" "budget" "debug" "init" "undo" "clear"
+    "history" "queue" "rollbacks" "raco" "judge" "workflows" "lsp"))
 
 (define (handle-new-session sid mode)
   (save-ctx! (let ([db (load-ctx)]) 
@@ -394,42 +400,37 @@ Tip: Use ↑/↓ arrow keys to navigate command history.")]
                           (eprintf "Check your API endpoint and key configuration.\n"))])
          (cond
            [(string=? rest "")
-            ;; No query - list all models
-            (printf "Fetching available models from ~a...\n" (base-url-param))
-            (define models
-              (if fetch-models
-                  (fetch-models (base-url-param) api-key)
-                  (fetch-models-from-endpoint (base-url-param) api-key)))
-            (if (null? models)
-                (printf "No models found. The API endpoint may not support model listing.\n")
-                (begin
-                  (printf "\nAvailable Models:\n")
-                  (for ([m models])
-                    (define model-id
-                      (cond
-                        [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
-                        [(string? m) m]
-                        [else "unknown"]))
-                    (printf "  - ~a\n" model-id))
-                  (printf "\nUse '/models <query>' to search models.\n")
-                  (printf "Use '/config model <name>' to set a model.\n")))]
+             ;; No query - list all models
+             (printf "Fetching available models from ~a...\n" (base-url-param))
+             (define models
+               (if fetch-models
+                   (fetch-models (base-url-param) api-key)
+                   (fetch-models-from-endpoint (base-url-param) api-key)))
+             (if (null? models)
+                 (printf "No models found. The API endpoint may not support model listing.\n")
+                 (begin
+                   (printf "\nAvailable Models:\n")
+                   (for ([m models])
+                     (define model-id
+                       (cond
+                         [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
+                         [(string? m) m]
+                         [else #f]))
+                     (when model-id
+                       (register-model! (make-capabilities-from-id model-id))
+                       (printf "  - ~a\n" model-id)))
+                   (printf "\nUse '/models <query>' to search models.\n")
+                   (printf "Use '/config model <name>' to set a model.\n")))]
            [else
              ;; With query - fuzzy search
              ;; First, ensure model registry is initialized with models from the endpoint
              (printf "Searching models for: ~a\n" rest)
-             (define available-models (list-available-models))
-             (when (null? available-models)
+             (when (null? (list-available-models))
                (printf "Initializing model registry...\n")
                (with-handlers ([exn:fail? (λ (e) 
-                                            (log-debug 1 'models "Failed to init registry: ~a" (exn-message e)))])
-                 (define fetched (fetch-models-from-endpoint (base-url-param) api-key))
-                 (for ([m (in-list fetched)])
-                   (define model-id (cond
-                                     [(hash? m) (hash-ref m 'id (hash-ref m 'name "unknown"))]
-                                     [(string? m) m]
-                                     [else #f]))
-                   (when model-id
-                     (register-model! model-id)))))
+                                            (log-debug 1 'models "Failed to init registry: ~a" (exn-message e))
+                                            (eprintf "Warning: Failed to initialize model registry: ~a\n" (exn-message e)))])
+                 (init-model-registry! #:api-key api-key #:api-base (base-url-param))))
              (define results (fuzzy-search-models rest))
              (if (null? results)
                  (printf "No matching models found. Try '/models' to list all available models first.\n")
@@ -633,8 +634,8 @@ EOF
                         (string-split rest #:trim? #f)
                         '()))
        (cond
-        [(null? parts)
-         (define q (list-queue))
+        [(or (null? parts) (equal? (first parts) "list"))
+         (define q (list-queue!))
          (if (null? q)
              (displayln "Queue is empty. Use '/queue <task>' to add tasks.")
              (begin
