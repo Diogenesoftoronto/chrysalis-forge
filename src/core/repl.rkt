@@ -8,7 +8,7 @@
          "../stores/context-store.rkt"
          "../llm/openai-client.rkt"
          "../utils/debug.rkt"
-         "../utils/terminal-style.rkt"
+         "../tui/compat/legacy-style.rkt"
          "../utils/intro-animation.rkt"
          "./command-queue.rkt")
 
