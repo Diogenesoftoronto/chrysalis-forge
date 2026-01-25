@@ -48,8 +48,7 @@
                                    [(104) 'bright-blue] [(105) 'bright-magenta]
                                    [(106) 'bright-cyan] [(107) 'bright-white]))]
     
-    ;; TODO: Support 256/TrueColor (38/48) which requires lookahead
-    ;; For now, we assume simple SGR codes.
+    ;; Extended color codes (38/48) handled in apply-sgr-sequence
     [else input-style]))
 
 (define (apply-sgr-sequence codes current-style)

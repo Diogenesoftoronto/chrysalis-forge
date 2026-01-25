@@ -6,7 +6,7 @@
 
 (require racket/string racket/match json racket/port racket/date racket/list net/http-client net/url)
 (require "config.rkt" "db.rkt" "auth.rkt" (except-in "key-vault.rkt" sha256-bytes))
-(require "../llm/model-registry.rkt")
+(require "../llm/model-registry.rkt" "../llm/openai-client.rkt")
 (require "../core/thread-manager.rkt")
 
 ;; ============================================================================
@@ -464,14 +464,24 @@
                                     #:mode mode
                                     #:context-node-id context-node-id))
   
-  ;; TODO: Actually invoke LLM with (hash-ref prep 'session_id)
-  ;; This is a placeholder showing the structure
-  (json-response 
-   (hash 'thread_id thread-id
-         'session_id (hash-ref prep 'session_id)
-         'context (hash-ref prep 'context)
-         'rotation_needed (hash-ref prep 'rotation_needed)
-         'message "LLM integration pending")))
+  ;; Invoke LLM with the prepared context
+  (define api-key (hash-ref user 'api_key #f))
+  (define llm-sender (make-openai-sender #:api-key api-key))
+  (define context-messages (hash-ref prep 'context '()))
+  (define full-prompt (append context-messages (list (hash 'role "user" 'content prompt))))
+  (define-values (success? response metadata) (llm-sender full-prompt))
+  
+  (if success?
+      (json-response 
+       (hash 'thread_id thread-id
+             'session_id (hash-ref prep 'session_id)
+             'message response
+             'usage (hash 'prompt_tokens (hash-ref metadata 'prompt_tokens 0)
+                          'completion_tokens (hash-ref metadata 'completion_tokens 0)
+                          'total_tokens (hash-ref metadata 'total_tokens 0))))
+      (json-response 
+       (hash 'error (hash 'message response 'type "llm_error"))
+       #:status 500)))
 
 (define (handle-create-thread-relation request)
   "POST /v1/threads/{id}/relations - Create thread relation"

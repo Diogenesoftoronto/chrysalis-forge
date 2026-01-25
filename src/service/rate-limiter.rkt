@@ -34,8 +34,6 @@
 (define (get-user-tier user-id)
   "Get user's subscription tier for rate limiting.
    Returns: 'free, 'pro, 'team, or 'enterprise"
-  ;; TODO: Query actual subscription from database
-  ;; For now, default to 'free
   (define conn (get-db))
   (define sub (query-maybe-row conn
     "SELECT plan_id FROM subscriptions WHERE user_id = ? AND status = 'active' LIMIT 1"
