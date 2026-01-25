@@ -19,6 +19,7 @@
          fetch-models-from-endpoint
          parse-model-from-api
          infer-capabilities-from-id
+         make-capabilities-from-id
          load-local-models-config
          merge-with-local-config
          init-model-registry!
@@ -266,6 +267,9 @@
         'cost-tier cost-tier
         'supports-tools? supports-tools?
         'supports-vision? supports-vision?))
+
+(define (make-capabilities-from-id id [provider 'unknown])
+  (parse-model-from-api (hash 'id id) provider))
 
 (define (get-default-context-window id)
   (define id-lower (string-downcase id))
