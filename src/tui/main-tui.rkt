@@ -7,7 +7,6 @@
 (require racket/match
          racket/string
          racket/set
-         racket/format
          racket/async-channel
          racket/port
          (only-in racket/list make-list take-right first take drop)
@@ -27,10 +26,7 @@
          "../tui/render/screen.rkt"
          "../utils/intro-animation.rkt"
          ;; Core functionality for feature parity
-         "../core/commands.rkt"
-         "../core/repl.rkt"
-         "../core/runtime.rkt"
-         "../stores/context-store.rkt")
+         "../core/commands.rkt")
 
 ;; ============================================================================
 ;; Application State
