@@ -7,11 +7,14 @@
          "src/stores/vector-store.rkt" "src/core/workflow-engine.rkt" "src/utils/utils-time.rkt" "src/tools/web-search.rkt"
          "src/stores/eval-store.rkt" "src/tools/mcp-client.rkt" "src/llm/model-registry.rkt"
          "src/stores/thread-store.rkt" "src/stores/rollback-store.rkt" "src/stores/session-stats.rkt" "src/tools/lsp-client.rkt"
-         "src/utils/terminal-style.rkt"
-         "src/utils/message-boxes.rkt"
-         "src/utils/status-bar.rkt"
+         ;; TUI system - use new framework via compatibility layer
+         "src/tui/compat/legacy-style.rkt"
+         "src/tui/compat/legacy-boxes.rkt"
+         "src/tui/compat/legacy-status.rkt"
          "src/utils/session-summary-viz.rkt"
          "src/utils/tool-visualization.rkt"
+         ;; New TUI mode
+         "src/tui/main-tui.rkt"
          ;; Modular imports - runtime state, commands, and REPL
          "src/core/runtime.rkt"
          "src/core/commands.rkt"
@@ -255,7 +258,7 @@
     (define in-tok (hash-ref usage 'prompt_tokens 0))
     (define out-tok (hash-ref usage 'completion_tokens 0))
     (define cost (calculate-cost current-model in-tok out-tok))
-    
+
     ;; Update session stats using setter functions from runtime.rkt
     (session-add-cost! cost)
     (session-add-tokens! in-tok out-tok)
@@ -299,13 +302,13 @@
           (loop (append msgs (list assistant-msg) res))))))
 
 ;; Functions imported from commands.rkt:
-;; - generate-session-title, handle-new-session, create-new-session!, 
+;; - generate-session-title, handle-new-session, create-new-session!,
 ;;   resume-last-session!, resume-session-by-id!, list-sessions!, list-threads!
 ;;   display-figlet-banner, print-session-summary!, handle-slash-command
 
 ;; Functions imported from runtime.rkt:
 ;; - levenshtein, format-duration, format-number
-;; - session-start-time, session-input-tokens, session-output-tokens, 
+;; - session-start-time, session-input-tokens, session-output-tokens,
 ;;   session-turn-count, session-model-usage, session-tool-usage, total-session-cost
 
 (define (verify-env! #:fail [fail? #f])
@@ -373,7 +376,7 @@
 
 ;; Removed ~410 lines of duplicate code:
 ;; - handle-slash-command (full definition) - now in commands.rkt
-;; - format-duration, format-number - now in runtime.rkt  
+;; - format-duration, format-number - now in runtime.rkt
 ;; - print-session-summary! - now in commands.rkt
 ;; - with-raw-terminal, read-multiline-input, read-bracket-seq - now in repl.rkt
 ;; - Old repl-loop definition - now using modular repl-loop from repl.rkt
@@ -402,13 +405,13 @@
               [("--acp") "Run ACP Server" (mode-param 'acp)]
               [("--acp-port") port "ACP Port (default: stdio)" (acp-port-param port)]
               [("-P" "--perms") p "Security Level (0, 1, 2, 3, god)"
-                           (match p
-                             ["0" (current-security-level 0)]
-                             ["1" (current-security-level 1)]
-                             ["2" (current-security-level 2)]
-                             ["3" (current-security-level 3)]
-                             ["god" (current-security-level 4)]
-                             [_ (error "Invalid permission level. Use 0, 1, 2, 3, or god.")])]
+                                (match p
+                                  ["0" (current-security-level 0)]
+                                  ["1" (current-security-level 1)]
+                                  ["2" (current-security-level 2)]
+                                  ["3" (current-security-level 3)]
+                                  ["god" (current-security-level 4)]
+                                  [_ (error "Invalid permission level. Use 0, 1, 2, 3, or god.")])]
 
               [("-d" "--debug") level "Set Debug Level (0, 1, 2, verbose)"
                                 (let ([val (string->number level)])
@@ -419,6 +422,7 @@
               [("-m" "--model") m "Set LLM Model (e.g., gpt-5.2, o1-preview)" (model-param m)]
               [("-p" "--priority") p "Set Runtime Priority (e.g., 'fast', 'cheap', or 'I need accuracy')" (priority-param p)]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
+              [("--tui") "Launch full-screen TUI mode" (mode-param 'tui)]
               ;; Service mode options
               [("--serve") "Start HTTP service" (mode-param 'serve)]
               [("--serve-port") port "Service port (default: 8080)" (serve-port-param (string->number port))]
@@ -430,10 +434,19 @@
               [("--url") url "Service URL to connect to (default: http://127.0.0.1:8080)" (client-url-param url)]
               [("--api-key") key "API key or token for authentication" (client-api-key-param key)]
               ;; Session management options
-              [("--session") action "Session action: 'resume' (resume last), '<id>' (resume by ID), 'list' (list sessions)" 
-                           (session-action-param action)]
+              [("--session") action "Session action: 'resume' (resume last), '<id>' (resume by ID), 'list' (list sessions)"
+                             (session-action-param action)]
               #:args raw-args
               (match (mode-param)
+                ['tui
+                 ;; TUI Mode - Launch full-screen terminal UI
+                 (check-env-verbose!)
+                 (verify-env! #:fail #f)
+                 (define tui-session-id (create-new-session!))
+                 (handle-new-session "cli" "code")
+                 (start-main-tui #:run-turn acp-run-turn
+                                 #:session-id tui-session-id
+                                 #:api-key env-api-key)]
                 ['gui
                  ;; GUI Mode - Launch graphical interface
                  (define gui-mod (dynamic-require 'chrysalis-forge/src/gui/main-gui 'run-gui!))
