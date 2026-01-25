@@ -4,77 +4,76 @@
 
 (provide add-to-queue!
          get-next-queued!
-         peek-queue
-         list-queue
+         list-queue!
          clear-queue!
-         remove-queue-item!
-         queue-empty?
          queue-length
-         command-queue-param)
+         peek-queue
+         remove-queue-item!
+         MAX-QUEUE)
 
-(require racket/list)
+(require racket/list 
+         racket/string)
 
-(define command-queue-param (make-parameter '()))
+(define queue-store (box '()))
 (define MAX-QUEUE 20)
 
 (define (add-to-queue! task)
   (define trimmed (string-trim task))
-  (when (> (string-length trimmed) 0)
-    (define current (command-queue-param))
-    (if (>= (length current) MAX-QUEUE)
-        #f
-        (begin
-          (command-queue-param (append current (list trimmed)))
-          #t))))
+  (if (or (string=? trimmed "") 
+          (>= (length (unbox queue-store)) MAX-QUEUE))
+      #f
+      (begin
+        (set-box! queue-store (append (unbox queue-store) (list trimmed)))
+        #t)))
 
 (define (get-next-queued!)
-  (define current (command-queue-param))
-  (if (null? current)
+  (define q (unbox queue-store))
+  (if (null? q)
       #f
-      (let ([task (first current)])
-        (command-queue-param (rest current))
-        task)))
+      (begin
+        (set-box! queue-store (cdr q))
+        (car q))))
 
-(define (peek-queue)
-  (define current (command-queue-param))
-  (if (null? current) #f (first current)))
-
-(define (list-queue)
-  (command-queue-param))
+(define (list-queue!)
+  (unbox queue-store))
 
 (define (clear-queue!)
-  (command-queue-param '()))
-
-(define (remove-queue-item! index)
-  (define current (command-queue-param))
-  (if (and (>= index 0) (< index (length current)))
-      (begin
-        (command-queue-param (append (take current index) (drop current (add1 index))))
-        #t)
-      #f))
-
-(define (queue-empty?)
-  (null? (command-queue-param)))
+  (set-box! queue-store '()))
 
 (define (queue-length)
-  (length (command-queue-param)))
+  (length (unbox queue-store)))
 
-(define (string-trim str)
-  (regexp-replace* #px"^\\s+|\\s+$" str ""))
+;; Extra utilities
+(define (peek-queue)
+  (define q (unbox queue-store))
+  (if (null? q) #f (car q)))
+
+(define (remove-queue-item! index)
+  (define q (unbox queue-store))
+  (if (and (>= index 0) (< index (length q)))
+      (begin
+        (set-box! queue-store 
+                  (append (take q index) (drop q (add1 index))))
+        #t)
+      #f))
 
 (module+ test
   (require rackunit)
   
   (test-case "queue operations"
-    (parameterize ([command-queue-param '()])
-      (check-true (queue-empty?))
-      (check-true (add-to-queue! "task 1"))
-      (check-false (queue-empty?))
-      (check-equal? (queue-length) 1)
-      (check-equal? (peek-queue) "task 1")
-      (check-true (add-to-queue! "task 2"))
-      (check-equal? (queue-length) 2)
-      (check-equal? (get-next-queued!) "task 1")
-      (check-equal? (queue-length) 1)
-      (clear-queue!)
-      (check-true (queue-empty?)))))
+    (clear-queue!)
+    (check-equal? (queue-length) 0)
+    (check-true (add-to-queue! "task 1"))
+    (check-equal? (queue-length) 1)
+    (check-equal? (peek-queue) "task 1")
+    (check-true (add-to-queue! "task 2"))
+    (check-equal? (queue-length) 2)
+    
+    (define tasks (list-queue!))
+    (check-equal? tasks '("task 1" "task 2"))
+    
+    (check-equal? (get-next-queued!) "task 1")
+    (check-equal? (queue-length) 1)
+    
+    (clear-queue!)
+    (check-equal? (queue-length) 0)))
