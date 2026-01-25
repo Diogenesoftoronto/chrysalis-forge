@@ -20,7 +20,7 @@
 
 (require racket/string
          racket/match
-         "terminal-style.rkt")
+         "../tui/compat/legacy-style.rkt")
 
 ;; ---------------------------------------------------------------------------
 ;; Streaming Primitives

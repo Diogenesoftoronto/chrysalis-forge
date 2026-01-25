@@ -7,12 +7,16 @@
  play-intro!
  show-logo
  show-system-checks
- show-greeting)
+ show-greeting
+ ;; Raw animation data for TUI event loop
+ LOGO-FRAMES
+ LOGO-TITLE
+ STATUS-ICONS)
 
 (require racket/string
          racket/list
          racket/format
-         "terminal-style.rkt"
+         "../tui/compat/legacy-style.rkt"
          "loading-animations.rkt")
 
 ;;; ============================================================================
@@ -123,7 +127,7 @@ TITLE
                         #:color [col 'cyan]
                         #:port [port (current-output-port)])
   (define max-lines (apply max (map frame-line-count frames)))
-  
+
   (for ([frame (in-list frames)]
         [i (in-naturals)])
     (when (> i 0)
@@ -167,20 +171,20 @@ TITLE
                             #:port [port (current-output-port)])
   (displayln (bold (color 'cyan "  System Checks")) port)
   (displayln "" port)
-  
+
   (for ([check (in-list checks-list)])
     (define name (car check))
     (define status (cdr check))
     (define icon (status-icon status))
     (define col (status-color status))
-    
+
     ;; Show pending first
     (fprintf port "    ~a ~a... "
              (color 'cyan (status-icon 'pending))
              (dim name))
     (flush-output port)
     (sleep (/ CHECK-DELAY-MS 1000.0))
-    
+
     ;; Clear and show result
     (fprintf port "\r\033[K    ~a ~a~n"
              (color col icon)
@@ -188,7 +192,7 @@ TITLE
                  name
                  (color col name)))
     (flush-output port))
-  
+
   (displayln "" port))
 
 (define (show-greeting #:tip [tip #f]
@@ -196,18 +200,18 @@ TITLE
                        #:port [port (current-output-port)])
   (define greeting "Welcome to Chrysalis Forge")
   (define formatted-greeting (bold (gradient greeting 'cyan 'magenta)))
-  
+
   (displayln "" port)
   (if animated?
       (begin
         (display "  " port)
         (typewriter-print formatted-greeting #:port port))
       (displayln (string-append "  " formatted-greeting) port))
-  
+
   (when tip
     (displayln "" port)
     (displayln (string-append "  " (dim "💡 Tip: ") (italic tip)) port))
-  
+
   (displayln "" port)
   (flush-output port))
 
@@ -247,20 +251,20 @@ TITLE
 (module+ test
   (require rackunit
            racket/port)
-  
+
   ;; Test status icons
   (check-equal? (status-icon 'ok) "✓")
   (check-equal? (status-icon 'fail) "✗")
   (check-equal? (status-icon 'warn) "⚠")
-  
+
   ;; Test status colors
   (check-equal? (status-color 'ok) 'green)
   (check-equal? (status-color 'fail) 'red)
-  
+
   ;; Test frame line count
   (check-equal? (frame-line-count "a\nb\nc") 3)
   (check-equal? (frame-line-count "single") 1)
-  
+
   ;; Test that play-intro! produces output (fast mode, no animations)
   (parameterize ([color-enabled-param #f])
     (define output

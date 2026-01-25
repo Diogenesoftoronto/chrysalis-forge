@@ -6,8 +6,8 @@
          racket/list
          racket/format
          racket/math
-         "terminal-style.rkt"
-         "message-boxes.rkt")
+         "../tui/compat/legacy-style.rkt"
+         "../tui/compat/legacy-boxes.rkt")
 
 (provide render-session-summary
          sparkline

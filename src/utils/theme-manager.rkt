@@ -12,7 +12,7 @@
 (require json
          racket/file
          racket/path
-         "terminal-style.rkt")
+         "../tui/compat/legacy-style.rkt")
 
 ;; ---------------------------------------------------------------------------
 ;; Configuration
