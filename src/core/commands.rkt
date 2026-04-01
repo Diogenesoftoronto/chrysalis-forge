@@ -17,6 +17,7 @@
          "../tools/mcp-client.rkt"
          "../llm/model-registry.rkt"
          "../stores/eval-store.rkt"
+         "../stores/agent-archive.rkt"
          "./runtime.rkt"
          "./command-queue.rkt"
          "./repl.rkt"
@@ -38,7 +39,7 @@
 (define available-slash-commands
   '("help" "exit" "quit" "stats" "context" "compact" "models" "config"
     "thread" "session" "tools" "budget" "debug" "init" "undo" "clear"
-    "history" "queue" "rollbacks" "raco" "judge" "workflows" "lsp"))
+    "history" "queue" "rollbacks" "raco" "judge" "workflows" "lsp" "archive"))
 
 (define (handle-new-session sid mode)
   (save-ctx! (let ([db (load-ctx)]) 
@@ -169,6 +170,7 @@
   /exit, /quit       - Exit
   /stats             - Show session stats (tokens, cost, context)
   /context           - Show detailed context usage
+  /archive list|show|best - Inspect evolved agent variants
   /undo <path>       - Rollback file to previous version
   /rollbacks [path]  - List available rollbacks
   /raco <args>       - Run raco commands
@@ -663,8 +665,62 @@ EOF
              (printf "Added to queue (~a pending): ~a~n" (queue-length) task)
              (displayln "Queue is full (max 20). Use '/queue pop' or '/queue clear'."))])]
        
+      ["archive"
+       (define rest (if (>= (string-length input) 8)
+                        (string-trim (substring input 8))
+                        ""))
+       (define parts (string-split rest))
+       (cond
+         [(or (null? parts) (equal? (first parts) "list"))
+          (define type (if (>= (length parts) 2) (string->symbol (second parts)) 'prompt))
+          (define archive (load-agent-archive type))
+          (printf "\nAgent Archive (~a):\n" type)
+          (printf "~a\n" (make-string 80 #\-))
+          (if (null? (AgentArchive-variants archive))
+              (printf "No variants found.\n")
+              (for ([v (reverse (AgentArchive-variants archive))])
+                (define eval (AgentVariant-eval-summary v))
+                (printf "  [~a] ~a (Parent: ~a) | Score: ~a | ~a\n"
+                        (AgentVariant-task-family v)
+                        (AgentVariant-id v)
+                        (or (AgentVariant-parent-id v) "none")
+                        (hash-ref eval 'success_rate "N/A")
+                        (if (AgentVariant-viable v) "VIABLE" "FAILED"))))
+          (printf "\nUse '/archive show <type> <id>' to view content.\n")]
+         
+         [(and (>= (length parts) 3) (equal? (first parts) "show"))
+          (define type (string->symbol (second parts)))
+          (define id (third parts))
+          (define archive (load-agent-archive type))
+          (define v (get-variant-by-id archive id))
+          (if v
+              (begin
+                (printf "\nVariant: ~a (~a)\n" id type)
+                (printf "Parent: ~a | Family: ~a | Viable: ~a\n" 
+                        (AgentVariant-parent-id v) (AgentVariant-task-family v) (AgentVariant-viable v))
+                (printf "Evaluation: ~a\n" (jsexpr->string (AgentVariant-eval-summary v)))
+                (printf "Metadata: ~a\n" (jsexpr->string (AgentVariant-metadata v)))
+                (printf "\nContent:\n~a\n" (AgentVariant-content v)))
+              (printf "Variant '~a' not found in ~a archive.\n" id type))]
+         
+         [(and (>= (length parts) 3) (equal? (first parts) "best"))
+          (define type (string->symbol (second parts)))
+          (define family (third parts))
+          (define archive (load-agent-archive type))
+          (define best (get-best-variants archive family))
+          (if (null? best)
+              (printf "No viable variants found for family '~a'.\n" family)
+              (begin
+                (printf "\nBest Variants for ~a (~a):\n" family type)
+                (for ([v best])
+                  (printf "  - ~a: Score ~a\n" 
+                          (AgentVariant-id v) 
+                          (hash-ref (AgentVariant-eval-summary v) 'success_rate))))) ]
+         
+         [else (displayln "Usage: /archive [list <type>|show <type> <id>|best <type> <family>]")])]
+
        [_
-       (define candidates '("exit" "quit" "help" "raco" "config" "models" "workflows" "init" "lsp" "history" "queue"))
+       (define candidates '("exit" "quit" "help" "raco" "config" "models" "workflows" "init" "lsp" "history" "queue" "archive"))
        (define suggestions (filter (λ (c) (<= (levenshtein cmd c) 2)) candidates))
        (if (not (null? suggestions))
            (printf "Unknown command '/~a'. Did you mean: /~a?\n" cmd (string-join suggestions ", /"))
