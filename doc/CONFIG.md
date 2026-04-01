@@ -145,18 +145,23 @@ LLM model configuration.
 
 | Key | Environment Variable | Default | Description |
 |-----|---------------------|---------|-------------|
-| `default` | `CHRYSALIS_DEFAULT_MODEL` | `"gpt-5.2"` | Default model for new sessions |
+| `default` | `CHRYSALIS_DEFAULT_MODEL` | `"gemini-3.1-pro-preview"` | Default model for new sessions |
+| `evolution` | `EVOLUTION_MODEL` | `"gpt-5.4-mini"` | Model used for generating evolutionary mutations |
+| `budget` | `BUDGET_MODEL` | `"gemini-3-flash-preview"` | Model used for low-priority/budget-constrained tasks |
 | `allowed` | `CHRYSALIS_ALLOWED_MODELS` | *(list)* | Comma-separated list of allowed model IDs |
 
 ```toml
 [models]
-default = "gpt-5.2"
-allowed = ["gpt-5.2", "gpt-4o", "gpt-4o-mini", "claude-3-opus", "claude-3-sonnet", "gemini-pro"]
+default = "gemini-3.1-pro-preview"
+evolution = "gpt-5.4-mini"
+budget = "gemini-3-flash-preview"
+allowed = ["gemini-3.1-pro-preview", "gpt-5.4-mini", "claude-4-6-sonnet", "deepseek-v3"]
 ```
 
 For environment variable:
 ```bash
-export CHRYSALIS_ALLOWED_MODELS="gpt-5.2,gpt-4o,claude-3-opus"
+export CHRYSALIS_DEFAULT_MODEL="gemini-3.1-pro-preview"
+export EVOLUTION_MODEL="gpt-5.4-mini"
 ```
 
 ### [rate_limits]
@@ -220,6 +225,8 @@ Quick reference for all environment variables:
 | `CHRYSALIS_ENABLE_REGISTRATION` | Allow signups (true/false) |
 | `CHRYSALIS_REQUIRE_EMAIL_VERIFY` | Require email verification |
 | `CHRYSALIS_DEFAULT_MODEL` | Default LLM model |
+| `EVOLUTION_MODEL` | Model for evolutionary search |
+| `BUDGET_MODEL` | Model for cheap tasks |
 | `CHRYSALIS_ALLOWED_MODELS` | Comma-separated model list |
 | `CHRYSALIS_FREE_DAILY_LIMIT` | Free tier daily limit |
 | `CHRYSALIS_ALLOWED_ORIGINS` | CORS origins (comma-separated) |

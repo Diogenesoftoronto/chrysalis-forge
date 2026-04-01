@@ -326,10 +326,10 @@ The `src/core/optimizer-gepa.rkt` module implements reflective prompt evolution.
 ### GEPA Evolution
 
 ```racket
-(define (gepa-evolve! feedback [model "gpt-5.2"]) → string?)
+(define (gepa-evolve! feedback [model (evolution-model-param)] #:task-family [task-family "general"]) → string?)
 ```
 
-Takes natural language feedback about what's wrong, loads the current context, asks an LLM to produce an improved prompt, and saves the result. Returns "Context Evolved." on success.
+Takes natural language feedback about what's wrong, loads the current context, asks an LLM to produce an improved prompt, and saves the result. Automatically archives the new prompt as a versioned variant in the `AgentArchive`.
 
 Example:
 
@@ -340,10 +340,65 @@ Example:
 ### Meta-Evolution
 
 ```racket
-(define (gepa-meta-evolve! feedback [model "gpt-5.2"]) → string?)
+(define (gepa-meta-evolve! feedback [model "gpt-5.4-mini"]) → string?)
 ```
 
 Evolves the optimizer's own instructions. This is the recursive self-improvement loop—when the optimization process itself can be improved, meta-evolution handles it.
+
+### Agent Evolution (HyperAgents Loop)
+
+The `src/core/agent-evolution.rkt` module implements the high-level evolutionary search loop.
+
+```racket
+(define (evolve-agent! type task-family feedback benchmark-fn 
+                       #:iterations [iterations 1] 
+                       #:model [model (evolution-model-param)]) → string?)
+```
+
+Executes a sequence of evolutionary iterations for a component type (`'prompt` or `'workflow`).
+
+```racket
+(define (select-next-parent archive task-family) → (or/c AgentVariant? #f))
+```
+
+Selects a suitable parent from the archive using a non-greedy strategy.
+
+```racket
+(define (run-candidate-eval! candidate benchmark-fn #:stage [stage "smoke"]) → AgentVariant?)
+```
+
+Runs a specific evaluation stage for a candidate and returns the variant with updated evaluation metadata.
+
+### Agent Archive: Versioned Component Storage
+
+The `src/stores/agent-archive.rkt` module manages the persistence of evolved variants.
+
+#### Data Structures
+
+```racket
+(struct AgentVariant 
+  (id parent-id type content eval-summary task-family metadata viable) 
+  #:transparent)
+```
+
+**id**: Unique identifier for the variant.
+**parent-id**: ID of the variant this was mutated from.
+**type**: `'prompt`, `'workflow`, `'profile`, or `'config`.
+**content**: The component data (e.g., prompt string or workflow hash).
+**eval-summary**: Hash containing metrics like `success_rate`, `avg_duration`, and `cost`.
+**task-family**: The category of tasks this variant is intended for.
+**viable**: Boolean indicating if the variant passed the evaluation gates.
+
+#### API
+
+```racket
+(define (load-agent-archive type) → AgentArchive?)
+(define (save-agent-archive! type archive) → void?)
+(define (record-variant! archive variant) → AgentArchive?)
+(define (get-variant-by-id archive id) → (or/c AgentVariant? #f))
+(define (get-best-variants archive task-family #:limit [limit 5]) → (listof AgentVariant?))
+
+---
 
 ### Harness Self-Optimization (Meta-Harness)
 

@@ -10,15 +10,17 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 
 ### Key Features
 
-- **Evolvable Context**: Self-optimizing system prompts via GEPA (General Evolvable Prompting Architecture)
-- **DSPy-style DSL**: Signatures, Modules (Predict, ChainOfThought), and Optimizers
-- **MAP-Elites Optimization**: Evolutionary optimization targeting cost, latency, and token efficiency
-- **Grounded Scoring**: Automated grading based on precision, speed ($/ms), and resource consumption
-- **Tiered Sandboxing**: Four levels of security isolation for code execution
-- **25 Built-in Tools**: File operations, code search, git, jj (Jujutsu), and self-evolution
-- **Parallel Sub-Agents**: Spawn concurrent tasks with specialized tool profiles
-- **Auto-Correction Loop**: Retry failed code execution with automatic fixes
-- **Vector Memory & RDF**: Semantic search and knowledge graph integration
+- **Archival Evolution**: HyperAgents-style evolutionary search over agent prompts and workflows with full lineage tracking.
+- **Evolvable Context**: Self-optimizing system prompts via GEPA (General Evolvable Prompting Architecture).
+- **DSPy-style DSL**: Signatures, Modules (Predict, ChainOfThought), and Optimizers.
+- **Context-Tiered Pricing**: Accurate cost tracking with rates that scale based on context length (e.g. Gemini 3.1 Pro tiered rates).
+- **MAP-Elites Optimization**: Evolutionary optimization targeting cost, latency, and token efficiency.
+- **Grounded Scoring**: Automated grading based on precision, speed ($/ms), and resource consumption.
+- **Tiered Sandboxing**: Four levels of security isolation for code execution.
+- **25 Built-in Tools**: File operations, code search, git, jj (Jujutsu), and self-evolution.
+- **Parallel Sub-Agents**: Spawn concurrent tasks with specialized tool profiles.
+- **Auto-Correction Loop**: Retry failed code execution with automatic fixes.
+- **Vector Memory & RDF**: Semantic search and knowledge graph integration.
 
 ## Tool Categories
 
@@ -112,7 +114,7 @@ chrysalis --perms 1 "Analyze this code"
 ```
 
 ### Configuration
-- `--model <name>`: Override model (default: gpt-5.2)
+- `--model <name>`: Override model (default: gemini-3.1-pro-preview)
 - `--base-url <url>`: Custom API endpoint (LiteLLM, Ollama, etc.)
 - `--priority <p>`: Set execution profile (`best`, `cheap`, `fast`, `verbose`)
 - `--budget <usd>`: Session budget limit
@@ -133,14 +135,16 @@ Create `.chrysalis/rules.md` in your project root to add project-specific instru
 ## Self-Evolution
 
 The agent learns and improves through:
-1. **GEPA**: Evolves system prompts based on feedback
-2. **Meta-GEPA**: Evolves the optimizer itself
-3. **Harness Strategy Evolution**: Evolves the harness itself — context budget, temperature, tool routing, execution priority, demo selection (12 evolvable fields)
-4. **Novelty Detection**: Jaccard n-gram similarity rejects mutations too close to existing elites
-5. **Bandit Model Ensemble**: Thompson Sampling (Beta-Binomial) picks which model generates mutations
-6. **Cross-Model Generalization**: Validates evolved configs across held-out models
-7. **Profile Learning**: Tracks which tool profiles succeed per task type
-8. **Eval Store**: Logs all task results for analysis
+1. **Archival Evolutionary Loop**: Implements `mutate -> stage-eval -> archive -> select-parent` for continuous agent improvement.
+2. **Staged Evaluation**: Candidates are gated by "smoke tests" before running expensive full benchmarks.
+3. **GEPA**: Evolves system prompts based on feedback, now integrated with versioned archives for lineage tracking.
+4. **Meta-GEPA**: Evolves the optimizer itself.
+5. **Harness Strategy Evolution**: Evolves the harness itself — context budget, temperature, tool routing, execution priority, demo selection (12 evolvable fields).
+6. **Novelty Detection**: Jaccard n-gram similarity rejects mutations too close to existing elites.
+7. **Bandit Model Ensemble**: Thompson Sampling (Beta-Binomial) picks which model generates mutations.
+8. **Cross-Model Generalization**: Validates evolved configs across held-out models.
+9. **Profile Learning**: Tracks which tool profiles succeed per task type.
+10. **Eval Store**: Logs all task results for analysis, now tracking candidate IDs and evaluation stages.
 
 ## MAP-Elites Optimization
  

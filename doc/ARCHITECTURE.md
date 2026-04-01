@@ -68,20 +68,24 @@ Contexts are versioned with timestamps when evolved, enabling historical analysi
 
 ### Eval Store
 
-The eval store (`src/stores/eval-store.rkt`) tracks task outcomes by profile. Every time a sub-agent completes a task, the result is logged:
+The eval store (`src/stores/eval-store.rkt`) tracks task outcomes by profile and versioned candidate. Every time a sub-agent completes a task, the result is logged:
 
 ```racket
-(log-eval! profile-name task-type success? duration-ms cost)
+(log-eval! #:task-id id 
+           #:success? bool 
+           #:profile name 
+           #:candidate-id cid 
+           #:eval-stage stage)
 ```
 
-This data feeds the learning loop. The `suggest-profile` function examines historical performance to recommend which profile suits a given task type:
+This data feeds the learning loop at two levels:
+1. **Profile Optimization**: The `suggest-profile` function examines historical performance to recommend which profile suits a given task type.
+2. **Evolutionary Gating**: The archival evolutionary loop uses eval data to gate candidates. Only variants that pass the "smoke" stage are permitted to proceed to full benchmarking.
 
-```racket
-(define (suggest-profile task-type)
-  (define stats (get-profile-stats))
-  ;; Find profile with highest success rate for this task type
-  ...)
-```
+Eval records now capture:
+- **Candidate ID**: Lineage-aware identifier from the Agent Archive.
+- **Evaluation Stage**: Distinguishes between cheap smoke tests and expensive full benchmarks.
+- **Telemetry**: Duration, cost, success, and tool usage frequency.
 
 Over time, the system learns that "researcher" profiles excel at code exploration while "editor" profiles are better for modifications. This learning is organic—it emerges from usage rather than explicit training.
 
@@ -102,6 +106,18 @@ This audit trail serves multiple purposes. Debugging becomes tractable—when so
 The decomposition archive (`src/stores/decomp-archive.rkt`) stores successful decomposition patterns. When a complex task is decomposed effectively—completing under budget with high success rate—the decomposition strategy is archived.
 
 Future similar tasks can retrieve proven strategies via KNN search, bootstrapping from past success rather than reasoning from scratch. This is MAP-Elites applied to decomposition: maintain diverse high-performing patterns, select based on task phenotype.
+
+### Agent Archive
+
+The agent archive (`src/stores/agent-archive.rkt`) persists versioned variants of agent components, including system prompts and workflows. Unlike the decomposition archive which focuses on task breakdown patterns, the agent archive tracks the evolution of the agent's core logic.
+
+Each `AgentVariant` maintains:
+- **Lineage**: Reference to the parent variant, enabling tree-based search and rollback.
+- **Evaluation Summary**: Aggregated performance metrics (success rate, cost, latency).
+- **Task Family**: Categorization for targeted parent selection (e.g., "coding", "research").
+- **Viability Gate**: Explicit flagging of variants that pass performance thresholds.
+
+This archival approach transforms optimization from simple linear replacement to a complex evolutionary search, preserving high-performing "branches" even when global regressions occur.
 
 ---
 
@@ -324,6 +340,21 @@ Checkpoints are created before risky operations—branching into subtasks, attem
 ### Sub-Agent Management
 
 The sub-agent system in `sub-agent.rkt` enables parallel execution with focused tool profiles. The key insight is that not every subtask needs access to all tools—in fact, restricting tools improves focus and safety.
+
+### HyperAgents Evolutionary Loop
+
+The core improvement mechanism in Chrysalis Forge is the evolutionary loop implemented in `src/core/agent-evolution.rkt`, inspired by the HyperAgents framework. This loop operates on agent components (prompts, workflows) rather than just task instances.
+
+The cycle consists of four distinct stages:
+
+1. **Selection**: A parent variant is selected from the `AgentArchive`. Selection is non-greedy, utilizing a mix of best-performing elites and recent variants to maintain exploration pressure.
+2. **Mutation**: A meta-agent generates a new candidate variant by applying feedback-driven modifications to the parent.
+3. **Staged Evaluation**:
+   - **Smoke Stage**: The candidate is run against a small set of representative tasks. If the success rate falls below a viability threshold (default 50%), the candidate is rejected immediately.
+   - **Full Stage**: Viable candidates proceed to extensive benchmarks to established precise performance phenotypes.
+4. **Archival**: The results are recorded in the `AgentArchive`, updating the lineage tree and informing future selection cycles.
+
+This loop provides the "outer" learning capability of the system, while GEPA provides the "inner" reflection loop for immediate context improvement.
 
 Four profiles are defined:
 
