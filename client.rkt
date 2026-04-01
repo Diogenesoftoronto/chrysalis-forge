@@ -5,7 +5,7 @@
 (require racket/cmdline
          racket/string
          "src/service/client.rkt"
-         "src/tui/client.rkt")
+         "src/tui/main-tui.rkt")
 
 ;; ============================================================================
 ;; Client Entry Point
@@ -32,6 +32,12 @@
        (client-repl (url-param) #:api-key (api-key-param))
        ;; New TUI mode
        (start-tui-client (url-param) #:api-key (api-key-param)))))
+
+(define (start-tui-client url #:api-key [api-key #f])
+  ;; The current main TUI entrypoint uses its own service bootstrap path.
+  ;; Keep the CLI contract stable even though the URL is not yet threaded through.
+  (void url)
+  (start-main-tui #:api-key api-key))
 
 ;; Run main when executed directly
 (module+ main

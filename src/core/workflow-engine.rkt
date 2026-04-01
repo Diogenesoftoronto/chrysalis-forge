@@ -1,6 +1,6 @@
 #lang racket/base
 (provide ensure-workflow-table workflow-list workflow-get workflow-set workflow-delete)
-(require db racket/string json racket/list)
+(require db racket/string json racket/list "../stores/agent-archive.rkt")
 
 (define DB-PATH (build-path (find-system-path 'home-dir) ".agentd" "graph.db"))
 
@@ -27,7 +27,15 @@
 (define (workflow-set slug description content)
   (define conn (get-db))
   (query-exec conn "INSERT INTO workflows (slug, description, content) VALUES (?, ?, ?) ON CONFLICT(slug) DO UPDATE SET description=excluded.description, content=excluded.content" slug description content)
-  "Workflow saved.")
+  
+  ;; Save to agent archive for evolutionary tracking
+  (define archive (load-agent-archive 'workflow))
+  (define id (format "wf-~a-~a" slug (current-seconds)))
+  (define variant (AgentVariant id #f 'workflow content (hash) slug 
+                                (hash 'description description) #t))
+  (save-agent-archive! 'workflow (record-variant! archive variant))
+  
+  "Workflow saved and archived.")
 
 (define (workflow-delete slug)
   (define conn (get-db))

@@ -156,9 +156,11 @@
 
 (define (layout-row children st x y c)
   (define n (length children))
-  (when (= n 0)
-    (return-row-empty x y c))
-  
+  (if (= n 0)
+      (return-row-empty x y c)
+      (layout-row-inner children st x y c)))
+
+(define (layout-row-inner children st x y c)
   (define available-w (constraints-max-width c))
   (define valign (or (and st (style-valign st)) 'top))
   
@@ -229,9 +231,11 @@
 
 (define (layout-col children st x y c)
   (define n (length children))
-  (when (= n 0)
-    (return-col-empty x y c))
-  
+  (if (= n 0)
+      (return-col-empty x y c)
+      (layout-col-inner children st x y c)))
+
+(define (layout-col-inner children st x y c)
   (define available-h (constraints-max-height c))
   (define align (or (and st (style-align st)) 'left))
   

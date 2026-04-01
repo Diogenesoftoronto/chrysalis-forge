@@ -70,7 +70,9 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 | `suggest_profile` | Get optimal profile for task type |
 | `profile_stats` | View learning data |
 | `evolve_system` | Trigger GEPA to improve prompts |
+| `evolve_harness` | Meta-Harness evolution: evolve harness strategy with novelty detection + bandit model selection |
 | `log_feedback` | Log task results for learning |
+| `use_llm_judge` | LLM-as-judge evaluation against criteria |
 | `generate_tests` | LLM-powered test generation |
 | `set_priority` | Autonomously switch performance profile (`fast`, `cheap`, etc.) |
 
@@ -133,8 +135,12 @@ Create `.chrysalis/rules.md` in your project root to add project-specific instru
 The agent learns and improves through:
 1. **GEPA**: Evolves system prompts based on feedback
 2. **Meta-GEPA**: Evolves the optimizer itself
-3. **Profile Learning**: Tracks which tool profiles succeed per task type
-4. **Eval Store**: Logs all task results for analysis
+3. **Harness Strategy Evolution**: Evolves the harness itself — context budget, temperature, tool routing, execution priority, demo selection (12 evolvable fields)
+4. **Novelty Detection**: Jaccard n-gram similarity rejects mutations too close to existing elites
+5. **Bandit Model Ensemble**: Thompson Sampling (Beta-Binomial) picks which model generates mutations
+6. **Cross-Model Generalization**: Validates evolved configs across held-out models
+7. **Profile Learning**: Tracks which tool profiles succeed per task type
+8. **Eval Store**: Logs all task results for analysis
 
 ## MAP-Elites Optimization
  

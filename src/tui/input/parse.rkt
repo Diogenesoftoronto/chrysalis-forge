@@ -145,9 +145,12 @@
 
 (define (parse-csi-sequence p buf)
   (define len (bytes-length buf))
-  (when (< len 3)
-    (values #f 0))
-  
+  (if (< len 3)
+      (values #f 0)
+      (parse-csi-sequence-inner p buf)))
+
+(define (parse-csi-sequence-inner p buf)
+  (define len (bytes-length buf))
   (define end-idx (find-csi-end buf 2))
   (cond
     [(not end-idx)
@@ -317,9 +320,11 @@
 
 (define (parse-ss3-sequence buf)
   (define len (bytes-length buf))
-  (when (< len 3)
-    (values #f 0))
-  
+  (if (< len 3)
+      (values #f 0)
+      (parse-ss3-sequence-inner buf)))
+
+(define (parse-ss3-sequence-inner buf)
   (define final-byte (bytes-ref buf 2))
   (define seq (subbytes buf 0 3))
   

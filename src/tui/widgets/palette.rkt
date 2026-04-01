@@ -88,7 +88,7 @@
              (values model '()))]
 
         ;; Cancel
-        [(key-event 'escape _ _ _)
+        [(key-event 'esc _ _ _)
          (values (palette-hide model) '())]
 
         ;; Input
@@ -98,7 +98,7 @@
          ;; Update filter
          (define query (text-input-value new-input))
          (define new-items (filter-items query (palette-model-items model)))
-         (define new-idx (min 0 (sub1 (length new-items)))) ;; Reset selection? Or keep 0.
+         (define new-idx (max 0 (sub1 (length new-items))))
 
          (values (struct-copy palette-model model
                               [input new-input]

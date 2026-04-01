@@ -306,7 +306,9 @@
                "")))))
 
   (define cursor-display-pos
-    (if mask-char cursor-pos cursor-pos))
+    (if mask-char
+        (min cursor-pos (string-length display-text))
+        cursor-pos))
 
   (define with-cursor
     (if is-placeholder?

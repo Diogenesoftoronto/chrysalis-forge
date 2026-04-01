@@ -6,7 +6,7 @@
          ;; Setters for mutable session state
          session-add-cost! session-add-tokens! session-increment-turns!
          session-record-model-usage!
-         model-param vision-model-param base-url-param
+         model-param vision-model-param evolution-model-param budget-model-param base-url-param
          budget-param timeout-param priority-param pretty-param
          interactive-param attachments
          current-security-level llm-judge-param llm-judge-model-param
@@ -44,8 +44,10 @@
 (define api-key env-api-key)
 
 (define base-url-param (make-parameter (or (getenv "OPENAI_API_BASE") "https://api.openai.com/v1")))
-(define model-param (make-parameter (or (getenv "MODEL") (getenv "CHRYSALIS_DEFAULT_MODEL") "gpt-5.2")))
-(define vision-model-param (make-parameter (or (getenv "VISION_MODEL") (model-param))))
+(define model-param (make-parameter (or (getenv "MODEL") (getenv "CHRYSALIS_DEFAULT_MODEL") "gemini-3.1-pro-preview")))
+(define evolution-model-param (make-parameter (or (getenv "EVOLUTION_MODEL") "gpt-5.4-mini")))
+(define vision-model-param (make-parameter (or (getenv "VISION_MODEL") "gpt-5.4")))
+(define budget-model-param (make-parameter (or (getenv "BUDGET_MODEL") "gemini-3-flash-preview")))
 (define interactive-param (make-parameter (or (getenv "INTERACTIVE") #f)))
 (define attachments (make-parameter '()))
 

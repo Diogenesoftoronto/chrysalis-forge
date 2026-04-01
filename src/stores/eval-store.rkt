@@ -21,9 +21,12 @@
                    #:task-type [task-type "unknown"]
                    #:tools-used [tools-used '()]
                    #:duration-ms [duration-ms 0]
-                   #:feedback [feedback ""])
+                   #:feedback [feedback ""]
+                   #:candidate-id [candidate-id #f]
+                   #:eval-stage [eval-stage "default"])
   (make-directory* (build-path (find-system-path 'home-dir) ".agentd"))
-  (log-debug 1 'eval "Task ~a: ~a (profile: ~a)" task-id (if success? "SUCCESS" "FAIL") profile)
+  (log-debug 1 'eval "Task ~a: ~a (profile: ~a, candidate: ~a, stage: ~a)" 
+             task-id (if success? "SUCCESS" "FAIL") profile candidate-id eval-stage)
   
   ;; Append to eval log
   (call-with-output-file EVAL-PATH
@@ -35,7 +38,9 @@
                         'task_type task-type
                         'tools_used tools-used
                         'duration_ms duration-ms
-                        'feedback feedback) out)
+                        'feedback feedback
+                        'candidate_id candidate-id
+                        'eval_stage eval-stage) out)
       (newline out))
     #:exists 'append)
   
@@ -43,27 +48,40 @@
   (update-profile-stats! profile success? task-type tools-used))
 
 ;; Update running statistics for profile performance
+;; Helper: look up a key that may be symbol or string in a hash from read-json
+(define (jref h key [default #f])
+  (cond
+    [(hash-ref h key #f)]
+    [(and (symbol? key) (hash-ref h (symbol->string key) #f))]
+    [(and (string? key) (hash-ref h (string->symbol key) #f))]
+    [else default]))
+
+;; Ensure key is a symbol (write-json requires symbol keys)
+(define (->sym k) (if (symbol? k) k (string->symbol k)))
+
 (define (update-profile-stats! profile success? task-type tools-used)
   (define stats (load-profile-stats))
-  (define profile-key (if (symbol? profile) (symbol->string profile) profile))
-  (define current (hash-ref stats profile-key (hash 'total 0 'success 0 'task_types (hash) 'tool_freq (hash))))
-  
-  (define new-total (add1 (hash-ref current 'total)))
-  (define new-success (+ (hash-ref current 'success) (if success? 1 0)))
-  
-  ;; Update task type frequency
-  (define task-types (hash-ref current 'task_types))
-  (define new-task-types (hash-set task-types task-type (add1 (hash-ref task-types task-type 0))))
-  
-  ;; Update tool usage frequency
-  (define tool-freq (hash-ref current 'tool_freq))
+  (define profile-sym (->sym (if (symbol? profile) (symbol->string profile) profile)))
+  (define current (jref stats profile-sym (hash 'total 0 'success 0 'task_types (hash) 'tool_freq (hash))))
+
+  (define new-total (add1 (jref current 'total 0)))
+  (define new-success (+ (jref current 'success 0) (if success? 1 0)))
+
+  ;; Update task type frequency (symbol keys for JSON)
+  (define task-types (jref current 'task_types (hash)))
+  (define task-sym (->sym task-type))
+  (define new-task-types (hash-set task-types task-sym (add1 (jref task-types task-sym 0))))
+
+  ;; Update tool usage frequency (symbol keys for JSON)
+  (define tool-freq (jref current 'tool_freq (hash)))
   (define new-tool-freq
     (for/fold ([freq tool-freq]) ([tool tools-used])
-      (hash-set freq tool (add1 (hash-ref freq tool 0)))))
-  
-  (define updated (hash-set stats profile-key 
-                            (hash 'total new-total 
-                                  'success new-success 
+      (define tool-sym (->sym tool))
+      (hash-set freq tool-sym (add1 (jref freq tool-sym 0)))))
+
+  (define updated (hash-set stats profile-sym
+                            (hash 'total new-total
+                                  'success new-success
                                   'success_rate (/ new-success new-total 1.0)
                                   'task_types new-task-types
                                   'tool_freq new-tool-freq)))
@@ -84,7 +102,7 @@
 (define (get-profile-stats [profile #f])
   (define stats (load-profile-stats))
   (if profile
-      (hash-ref stats (if (symbol? profile) (symbol->string profile) profile) #f)
+      (jref stats (if (symbol? profile) (symbol->string profile) profile) #f)
       stats))
 
 ;; Get tool usage frequency across all evals
@@ -103,11 +121,12 @@
   (define best-rate 0.0)
   
   (for ([(profile-name data) (in-hash stats)])
-    (define task-types (hash-ref data 'task_types (hash)))
-    (when (hash-has-key? task-types task-type)
-      (define rate (hash-ref data 'success_rate 0.0))
+    (define task-types (jref data 'task_types (hash)))
+    (when (or (hash-has-key? task-types task-type)
+              (hash-has-key? task-types (if (symbol? task-type) (symbol->string task-type) task-type)))
+      (define rate (jref data 'success_rate 0.0))
       (when (> rate best-rate)
-        (set! best-profile (string->symbol profile-name))
+        (set! best-profile (string->symbol (if (symbol? profile-name) (symbol->string profile-name) profile-name)))
         (set! best-rate rate))))
   
   (values best-profile best-rate))
@@ -118,8 +137,8 @@
   (define stats (get-profile-stats profile-name))
   (unless stats (error 'evolve-profile! "Unknown profile: ~a" profile-name))
   
-  (define success-rate (hash-ref stats 'success_rate 0.0))
-  (define tool-freq (hash-ref stats 'tool_freq (hash)))
+  (define success-rate (jref stats 'success_rate 0.0))
+  (define tool-freq (jref stats 'tool_freq (hash)))
   
   ;; Get most used tools
   (define sorted-tools 

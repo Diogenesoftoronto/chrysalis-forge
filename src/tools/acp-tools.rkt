@@ -2,7 +2,8 @@
 
 (provide make-acp-tools execute-acp-tool)
 (require json racket/file racket/string racket/system racket/list racket/port racket/match racket/path
-         "../stores/eval-store.rkt" "../core/optimizer-gepa.rkt" "mcp-client.rkt" "../llm/openai-client.rkt")
+         "../stores/eval-store.rkt" "../core/optimizer-gepa.rkt" "mcp-client.rkt" "../llm/openai-client.rkt"
+         "../llm/harness-evolve.rkt")
 
 (define mcp-clients (make-hash))
 (define mcp-tool-map (make-hash))
@@ -204,6 +205,13 @@
                                            'properties (hash 'feedback (hash 'type "string" 'description "Feedback about what to improve"))
                                            'required '("feedback"))))
    (hash 'type "function"
+         'function (hash 'name "evolve_harness"
+                         'description "Meta-Harness evolution: evolve harness strategy (context budget, temperature, tool routing, execution priority) using MAP-Elites with novelty detection and bandit model selection."
+                         'parameters (hash 'type "object"
+                                           'properties (hash 'feedback (hash 'type "string" 'description "Feedback about what to improve")
+                                                             'mutation_rate (hash 'type "number" 'description "Mutation rate 0.0-1.0 (default 0.3)"))
+                                           'required '("feedback"))))
+   (hash 'type "function"
          'function (hash 'name "log_feedback"
                          'description "Log feedback about a task result for learning. Feeds into profile optimization."
                          'parameters (hash 'type "object"
@@ -366,6 +374,24 @@
       ["evolve_system"
        (if (>= security-level 2)
            (gepa-evolve! (hash-ref args 'feedback))
+           "Permission Denied: Requires security level 2.")]
+
+      ["evolve_harness"
+       (if (>= security-level 2)
+           (let* ([feedback (hash-ref args 'feedback)]
+                  [rate (hash-ref args 'mutation_rate 0.3)]
+                  [strategy (mutate-harness-strategy default-harness-strategy rate)]
+                  [h (harness-strategy->hash strategy)])
+             ;; Also trigger GEPA evolution with the feedback
+             (gepa-evolve! feedback)
+             (format "Harness strategy evolved (mutation rate ~a):\n  context-budget: ~a\n  temperature: ~a\n  strategy: ~a\n  execution-priority: ~a\n  demo-selection: ~a\n  tool-hint-weight: ~a"
+                     rate
+                     (hash-ref h 'context-budget)
+                     (hash-ref h 'temperature)
+                     (hash-ref h 'strategy-type)
+                     (hash-ref h 'execution-priority)
+                     (hash-ref h 'demo-selection)
+                     (hash-ref h 'tool-hint-weight)))
            "Permission Denied: Requires security level 2.")]
       
       ["log_feedback"

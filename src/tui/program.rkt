@@ -10,8 +10,10 @@
          current-program-channel)
 
 (require racket/match racket/port racket/async-channel racket/list
+         racket/string
          "terminal.rkt"
-         "input/parse.rkt")
+         "input/parse.rkt"
+         "text/measure.rkt")
 
 ;; ============================================================================
 ;; Structs
@@ -93,15 +95,47 @@
     (when alt-screen? (exit-alt-screen!))
     (exit-raw-mode!))
 
+  ;; Previous frame lines for diff-based rendering
+  (define prev-lines (box '()))
+
   (define (render! model view-fn out-port)
     (define term-size (get-terminal-size))
     (define sz (size (car term-size) (cdr term-size)))
     (define view-str (view-fn model sz))
+    (define width (size-width sz))
+    (define height (size-height sz))
+    ;; Split rendered view into lines and pad/truncate to fill screen
+    (define raw-lines (string-split view-str "\r\n" #:trim? #f))
+    (define lines
+      (for/list ([i (in-range height)])
+        (if (< i (length raw-lines))
+            (let ([line (list-ref raw-lines i)])
+              ;; Pad line to full width to overwrite stale content
+              (define visible-w (text-width line))
+              (if (< visible-w width)
+                  (string-append line (make-string (- width visible-w) #\space))
+                  line))
+            (make-string width #\space))))
+    (define old-lines (unbox prev-lines))
     (parameterize ([current-output-port out-port])
-      (term-write! (cursor-to 1 1))
-      (term-write! (clear-screen))
-      (term-write! view-str)
-      (term-flush!)))
+      (cond
+        ;; First render or size changed: full redraw
+        [(or (null? old-lines) (not (= (length old-lines) height)))
+         (term-write! (cursor-to 1 1))
+         (for ([line (in-list lines)]
+               [row (in-naturals 1)])
+           (term-write! (cursor-to row 1))
+           (term-write! line))]
+        ;; Diff render: only repaint changed lines
+        [else
+         (for ([line (in-list lines)]
+               [old-line (in-list old-lines)]
+               [row (in-naturals 1)])
+           (unless (equal? line old-line)
+             (term-write! (cursor-to row 1))
+             (term-write! line)))])
+      (term-flush!))
+    (set-box! prev-lines lines))
 
   ;; Input reader thread with parser
   (define (start-input-reader!)

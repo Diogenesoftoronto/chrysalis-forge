@@ -4,14 +4,57 @@
 (require racket/string racket/list net/url json racket/port)
 
 ;; Prices in USD per 1M tokens (Input . Output)
-;; Initial defaults (OpenAI 2025/2026)
+;; Current 2026 Market Rates (April 2026)
+;; Prices in USD per 1M tokens (Input . Output)
+;; Current 2026 Market Rates (April 2026)
+;; Supports tiered pricing: (list (cons threshold-max (cons/hash rates)) ...)
+;; Supports complex pricing: (hash 'base-in X 'cache-hit A 'out B ...)
 (define DEFAULT-PRICING
-  (hash "gpt-5.2"     (cons 5.00 15.00)
-        "gpt-4o"      (cons 2.50 10.00)
-        "gpt-4o-mini" (cons 0.15 0.60)
-        "o1-preview"  (cons 15.00 60.00)
-        "o1-mini"     (cons 1.10 4.40)))
-
+  (hash 
+        ;; OpenAI GPT-5 Era (Tiered + Cache)
+        "gpt-5.4-pro"
+        (list (cons 200000 (hash 'base-in 30.00 'out 180.00))
+              (cons +inf.0  (hash 'base-in 60.00 'out 270.00)))
+        
+        "gpt-5.4"
+        (list (cons 200000 (hash 'base-in 2.50 'cache-hit 0.25 'out 15.00))
+              (cons +inf.0  (hash 'base-in 5.00 'cache-hit 0.50 'out 22.50)))
+        
+        "gpt-5.4-mini" (hash 'base-in 0.75 'cache-hit 0.075 'out 4.50)
+        "gpt-5.4-nano" (hash 'base-in 0.20 'cache-hit 0.02  'out 1.25)
+        
+        "o3-mini"         (cons 1.10 4.40)
+        
+        ;; Anthropic Claude 4/3 Era (Detailed Cache Pricing)
+        "claude-4-6-opus"   (hash 'base-in 5.00  'cache-write-5m 6.25  'cache-write-1h 10.00 'cache-hit 0.50 'out 25.00)
+        "claude-4-5-opus"   (hash 'base-in 5.00  'cache-write-5m 6.25  'cache-write-1h 10.00 'cache-hit 0.50 'out 25.00)
+        "claude-4-1-opus"   (hash 'base-in 15.00 'cache-write-5m 18.75 'cache-write-1h 30.00 'cache-hit 1.50 'out 75.00)
+        "claude-4-opus"     (hash 'base-in 15.00 'cache-write-5m 18.75 'cache-write-1h 30.00 'cache-hit 1.50 'out 75.00)
+        
+        "claude-4-6-sonnet" (hash 'base-in 3.00  'cache-write-5m 3.75  'cache-write-1h 6.00  'cache-hit 0.30 'out 15.00)
+        "claude-4-5-sonnet" (hash 'base-in 3.00  'cache-write-5m 3.75  'cache-write-1h 6.00  'cache-hit 0.30 'out 15.00)
+        "claude-4-sonnet"   (hash 'base-in 3.00  'cache-write-5m 3.75  'cache-write-1h 6.00  'cache-hit 0.30 'out 15.00)
+        "claude-3-7-sonnet" (hash 'base-in 3.00  'cache-write-5m 3.75  'cache-write-1h 6.00  'cache-hit 0.30 'out 15.00) ;; Deprecated
+        
+        "claude-4-5-haiku"  (hash 'base-in 1.00  'cache-write-5m 1.25  'cache-write-1h 2.00  'cache-hit 0.10 'out 5.00)
+        "claude-3-5-haiku"  (hash 'base-in 0.80  'cache-write-5m 1.00  'cache-write-1h 1.60  'cache-hit 0.08 'out 4.00)
+        
+        "claude-3-opus"     (hash 'base-in 15.00 'cache-write-5m 18.75 'cache-write-1h 30.00 'cache-hit 1.50 'out 75.00) ;; Deprecated
+        "claude-3-haiku"    (hash 'base-in 0.25  'cache-write-5m 0.30  'cache-write-1h 0.50  'cache-hit 0.03 'out 1.25)
+        
+        ;; Google Gemini 3 Era (Tiered Pricing)
+        "gemini-3.1-pro-preview" 
+        (list (cons 200000 (cons 2.00 12.00))
+              (cons +inf.0 (cons 4.00 18.00)))
+        
+        "gemini-3-flash-preview" (cons 0.40 2.40)
+        
+        ;; Open Frontier Leaders
+        "deepseek-v3"     (cons 0.14 0.28)
+        "deepseek-r2"     (cons 0.55 2.19)
+        "kimi-k2-5"       (cons 0.60 2.50)
+        "glm-5"           (cons 1.00 3.20)
+        "glm-5-turbo"     (cons 1.20 4.00)))
 (define current-pricing (make-hash (hash->list DEFAULT-PRICING)))
 (define pricing-updated? (box #f))
 
@@ -135,22 +178,45 @@
   (hash 'completions (do-fetch "usage" usage-url)
         'costs (do-fetch "costs" cost-url)))
 
-(define (get-pricing model)
-  ;; Lazy update if not yet done (blocking, but satisfies "run a network request")
-  (unless (unbox pricing-updated?)
-    (update-pricing!))
+(define (log-warning fmt . args) (apply eprintf (string-append "WARNING: " fmt "\n") args))
+(define (log-info fmt . args) (apply eprintf (string-append "INFO: " fmt "\n") args))
+
+(define (get-pricing model [context-tokens 0])
+  ;; In test/offline mode, we skip network update
+  ;; Use environment variable or global flag to skip
+  (unless (or (unbox pricing-updated?) (getenv "SKIP_PRICING_UPDATE"))
+    (with-handlers ([exn:fail? (λ (e) (log-warning "Lazy pricing update failed: ~a" (exn-message e)))])
+      (update-pricing!)))
     
   ;; Try exact match
-  (or (hash-ref current-pricing model #f)
-      ;; Try prefix matching
-      (for/first ([key (in-list (hash-keys current-pricing))]
-                  #:when (string-prefix? model key))
-        (hash-ref current-pricing key))
-      ;; Default to 0
-      (cons 0.0 0.0)))
+  (define entry 
+    (or (hash-ref current-pricing model #f)
+        ;; Try prefix matching (longest match wins)
+        (let* ([matching-keys (filter (λ (key) (string-prefix? model key)) (hash-keys current-pricing))]
+               [sorted-keys (sort matching-keys > #:key string-length)])
+          (if (null? sorted-keys)
+              #f
+              (hash-ref current-pricing (car sorted-keys))))))
+  
+  (define resolved
+    (cond
+      [(not entry) (cons 0.0 0.0)]
+      [(list? entry)
+       ;; Resolve tiered pricing based on context length
+       (or (for/first ([tier (in-list entry)]
+                       #:when (<= context-tokens (car tier)))
+             (cdr tier))
+           (cdr (last entry)))]
+      [else entry]))
+  
+  (if (hash? resolved)
+      ;; Resolve complex pricing to base rates for standard calculation
+      (cons (hash-ref resolved 'base-in 0.0) (hash-ref resolved 'out 0.0))
+      resolved))
 
 (define (calculate-cost model tokens-in tokens-out)
-  (define prices (get-pricing model))
+  (define total (+ tokens-in tokens-out))
+  (define prices (get-pricing model total))
   (let ([p-in (car prices)]
         [p-out (cdr prices)])
     (+ (* (/ tokens-in 1000000.0) p-in)

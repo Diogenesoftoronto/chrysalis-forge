@@ -345,6 +345,99 @@ Example:
 
 Evolves the optimizer's own instructions. This is the recursive self-improvement loop—when the optimization process itself can be improved, meta-evolution handles it.
 
+### Harness Self-Optimization (Meta-Harness)
+
+The `src/llm/harness-evolve.rkt` module implements four capabilities that close the gap between Chrysalis Forge and systems like Meta-Harness (arxiv 2603.28052) and ShinkaEvolve (Sakana AI).
+
+#### Novelty Detection
+
+Prevents wasting LLM evaluations on trivially different mutations by measuring instruction similarity using Jaccard distance on character 3-grams.
+
+```racket
+(define archive (make-novelty-archive #:threshold 0.3))
+
+;; Check if a candidate is novel enough to evaluate
+(novel-enough? archive "New instruction text") ; → #t or #f
+
+;; Add evaluated instruction to the archive
+(novelty-archive-add! archive "Evaluated instruction text")
+
+;; Get novelty score (min distance to any archived instruction)
+(instruction-novelty-score archive "Some instruction") ; → 0.0 to 1.0
+```
+
+#### Bandit-Based Model Ensemble
+
+Thompson Sampling (Beta-Binomial conjugate prior) selects which model generates mutations during evolution, balancing exploration and exploitation.
+
+```racket
+(define bandit (make-model-bandit '("gpt-5.2" "claude-3" "gemini-2")))
+
+;; Sample a model (exploration/exploitation trade-off)
+(bandit-sample bandit) ; → "gpt-5.2" (probabilistic)
+
+;; Update after observing result
+(bandit-update! bandit "gpt-5.2" #t)  ; success
+(bandit-update! bandit "claude-3" #f) ; failure
+
+;; Get statistics
+(bandit-stats bandit)
+; → hash mapping model names to {mean, alpha, beta}
+```
+
+#### Cross-Model Generalization
+
+Validates that evolved configurations work across different models, not just the one used during evolution.
+
+```racket
+(define result
+  (test-cross-model-generalization
+    module ctx trainset
+    (list sender-gpt sender-claude sender-gemini)
+    score-fn
+    #:threshold 0.6))
+
+;; result is a generalization-result struct:
+;; - scores: list of per-model scores
+;; - mean-score: arithmetic mean
+;; - std-dev: standard deviation
+;; - passes?: whether mean >= threshold
+```
+
+#### Harness Strategy Evolution
+
+Evolves the harness's own decision-making parameters—not just prompts, but structural choices like context budget, execution strategy, and tool routing.
+
+```racket
+;; 12 evolvable fields
+(struct harness-strategy
+  (context-budget compaction-threshold strategy-type temperature top-p
+   tool-hint-weight prefer-tools? demo-count demo-selection
+   prefer-cheap-decomp? execution-priority mutation-rate))
+
+;; Mutate with given rate (0.0 = no change, 1.0 = all fields)
+(define mutated (mutate-harness-strategy default-harness-strategy 0.3))
+
+;; Serialize for storage
+(define h (harness-strategy->hash mutated))
+(define restored (hash->harness-strategy h))
+```
+
+#### Integrated Compiler
+
+`compile/evolve!` is a drop-in replacement for `compile!` that uses all four capabilities in a unified MAP-Elites loop:
+
+```racket
+(define archive
+  (compile/evolve! module ctx trainset send!
+    #:models '("gpt-5.2" "claude-3")    ; bandit selects among these
+    #:novelty-threshold 0.3              ; reject similar mutations
+    #:generalize-models held-out-senders ; test cross-model
+    #:evolve-strategy? #t))              ; also evolve harness strategy
+```
+
+The `evolve_harness` ACP tool exposes this capability to the agent at security level 2.
+
 ---
 
 ## Sub-Agent Management
