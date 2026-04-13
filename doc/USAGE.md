@@ -13,7 +13,7 @@ Chrysalis Forge requires Racket version 9.0 or later. If you don't have Racket i
 Clone and install with:
 
 ```bash
-git clone https://github.com/diogenesoft/chrysalis-forge.git
+git clone https://github.com/Diogenesoftoronto/chrysalis-forge.git
 cd chrysalis-forge
 raco pkg install --auto
 ```

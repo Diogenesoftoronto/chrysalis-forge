@@ -10,7 +10,7 @@
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
 (define pkg-desc "An evolvable, safety-gated Racket agent with DSPy optimization.")
 (define version "0.2")
-(define authors '("Diogenes <diogenesoft@protonmail.com>"))
+(define authors '("Diogenes <Diogenesoftoronto@protonmail.com>"))
 (define license 'gpl3+)
 (define scribblings '(("scribblings/chrysalis-forge.scrbl" (multi-page))))
 

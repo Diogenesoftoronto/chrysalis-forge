@@ -22,7 +22,7 @@ It provides:
 @subsection{From Source}
 
 @verbatim|{
-git clone https://github.com/diogenesoft/chrysalis-forge
+git clone https://github.com/Diogenesoftoronto/chrysalis-forge
 cd chrysalis-forge
 raco pkg install
 }|
