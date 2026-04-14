@@ -199,6 +199,119 @@
     .nav-links a:hover { color: var(--text); }
     .nav-cta { display: flex; gap: .5rem; align-items: center; }
 
+    /* ── Mobile menu ──────────────────────────────── */
+    .nav-hamburger {
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 5px;
+      width: 38px;
+      height: 38px;
+      background: transparent;
+      border: 1px solid var(--border2);
+      cursor: pointer;
+      padding: .4rem;
+      flex-shrink: 0;
+    }
+    .nav-hamburger span {
+      display: block;
+      width: 18px;
+      height: 2px;
+      background: var(--text);
+      transition: transform .25s, opacity .25s;
+    }
+    .nav-hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .nav-hamburger.open span:nth-child(2) { opacity: 0; }
+    .nav-hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+    .mobile-menu {
+      display: none;
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(320px, 85vw);
+      height: 100vh;
+      background: var(--bg2);
+      border-left: 1px solid var(--border2);
+      z-index: 200;
+      transform: translateX(100%);
+      transition: transform .3s cubic-bezier(.4,0,.2,1);
+      padding: 1.5rem 1.25rem 2rem;
+      overflow-y: auto;
+    }
+    .mobile-menu.open { transform: translateX(0); }
+
+    .mobile-menu-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .mobile-menu-logo {
+      font-family: var(--display);
+      font-size: 1.2rem;
+      letter-spacing: .06em;
+    }
+    .mobile-menu-logo .chr { color: var(--gold); }
+    .mobile-menu-logo .forge { color: var(--teal); }
+    .mobile-menu-close {
+      background: transparent;
+      border: 1px solid var(--border2);
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      padding: .3rem .6rem;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    .mobile-menu-close:hover { color: var(--text); border-color: var(--text); }
+
+    .mobile-menu-links { list-style: none; }
+    .mobile-menu-links li { border-bottom: 1px solid var(--border); }
+    .mobile-menu-links li:last-child { border-bottom: none; }
+    .mobile-menu-links a {
+      display: block;
+      font-family: var(--mono);
+      font-size: .85rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--dim);
+      padding: .85rem .5rem;
+      transition: color .15s;
+      text-decoration: none;
+    }
+    .mobile-menu-links a:hover { color: var(--teal); }
+    .mobile-menu-cta {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+    }
+
+    .mobile-menu-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(8,8,16,.75);
+      z-index: 190;
+      opacity: 0;
+      transition: opacity .3s;
+    }
+    .mobile-menu-overlay.show { opacity: 1; }
+
+    @media (max-width: 768px) {
+      .nav-links, .nav-cta { display: none; }
+      .nav-hamburger { display: flex; }
+      .mobile-menu, .mobile-menu-overlay { display: block; }
+    }
+
     /* ── Hero ─────────────────────────────────────────── */
     #hero {
       padding: clamp(3rem, 8vw, 6rem) var(--pad) clamp(2rem, 5vw, 4rem);
@@ -983,6 +1096,13 @@
     }
     .footer-lambda span { color: var(--teal); }
 
+    /* ── Pretext canvas render ─────────────────────── */
+    .pretext-canvas {
+      display: inline-block;
+      vertical-align: baseline;
+    }
+    canvas.pretext-canvas { image-rendering: -webkit-optimize-contrast; }
+
     /* ── Scrollbar ───────────────────────────────────── */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: var(--bg); }
@@ -1063,8 +1183,37 @@
         ⬡ Source
       </a>
     </div>
+    <button class="nav-hamburger" aria-label="Open navigation menu" aria-expanded="false" aria-controls="mobile-menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
   </div>
 </nav>
+
+<!-- ──────────────── MOBILE MENU ──────────────── -->
+<div class="mobile-menu-overlay" id="mobile-overlay" aria-hidden="true"></div>
+<div class="mobile-menu" id="mobile-menu" role="dialog" aria-label="Navigation menu" aria-modal="true">
+  <div class="mobile-menu-header">
+    <span class="mobile-menu-logo"><span class="chr">CHRYSALIS</span> <span class="forge">FORGE</span></span>
+    <button class="mobile-menu-close" aria-label="Close menu">ESC</button>
+  </div>
+  <ul class="mobile-menu-links">
+    <li><a href="#hero">Home</a></li>
+    <li><a href="#evolution">Evolution</a></li>
+    <li><a href="#tools">Tools</a></li>
+    <li><a href="#security">Security</a></li>
+    <li><a href="#install">Install</a></li>
+    <li><a href="#usecases">Use Cases</a></li>
+    <li><a href="#papers">Papers</a></li>
+  </ul>
+  <div class="mobile-menu-cta">
+    <a href="https://github.com/Diogenesoftoronto/chrysalis-forge" class="btn btn-ghost" target="_blank" rel="noopener">
+      ⬡ Source
+    </a>
+    <a href="#install" class="btn btn-gold" style="text-align: center;">↓ Install</a>
+  </div>
+</div>
 
 
 <!-- ──────────────── HERO ──────────────── -->
@@ -1850,7 +1999,47 @@
 
 
 <!-- ──────────────── JS ──────────────── -->
-<script>
+<script type="module">
+  import { prepare, layout } from 'https://cdn.jsdelivr.net/npm/@chenglou/pretext/dist/layout.js';
+
+  // ── Pretext line-height fitting ──────────────
+  // Uses pretext for accurate text measurement to fit hero/display text
+  // into available width without overflow or excessive wrapping.
+  const pretextFits = new Map(); // cache: fontString → prepared
+
+  function fitTextToWidth(element, fontString, maxWidth, minSize, maxSize, lineHeight) {
+    if (!pretextFits.has(fontString)) {
+      pretextFits.set(fontString, new Map());
+    }
+    const cache = pretextFits.get(fontString);
+
+    for (let size = maxSize; size >= minSize; size--) {
+      const key = element.textContent + '::' + size;
+      let prepared = cache.get(key);
+      if (!prepared) {
+        prepared = prepare(element.textContent, size + 'px ' + fontString.split(' ').slice(1).join(' '));
+        cache.set(key, prepared);
+      }
+      const { height } = layout(prepared, maxWidth, size * lineHeight);
+      if (height <= size * lineHeight * 3) { // allow up to 3 lines
+        element.style.fontSize = size + 'px';
+        return size;
+      }
+    }
+    element.style.fontSize = minSize + 'px';
+    return minSize;
+  }
+
+  // Fit hero title lines that might overflow on narrow viewports
+  document.querySelectorAll('.hero-title').forEach(el => {
+    const style = getComputedStyle(el);
+    const fontStr = style.fontFamily.split(',')[0].replace(/['"]/g, '').trim() || 'Bebas Neue';
+    const lineHeight = parseFloat(style.lineHeight) || 1;
+    const maxW = el.offsetWidth || 600;
+    fitTextToWidth(el.querySelector('.line1'), fontStr, maxW, 40, 120, lineHeight);
+    fitTextToWidth(el.querySelector('.line2'), fontStr, maxW, 40, 120, lineHeight);
+  });
+
   // ── Copy to clipboard ──
   function copyCode(btn, text) {
     navigator.clipboard.writeText(text).then(() => {
@@ -1877,6 +2066,9 @@
       }, 2000);
     });
   }
+
+  // expose for inline onclick handlers
+  window.copyCode = copyCode;
 
   // ── Terminal demo animation ──
   const DEMO_LINES = [
@@ -1945,6 +2137,44 @@
 
   const termEl = document.getElementById('terminal-demo');
   if (termEl) observer.observe(termEl);
+
+  // ── Mobile menu ─────────────────────────────
+  const hamburger = document.querySelector('.nav-hamburger');
+  const mobileMenu = document.getElementById('mobile-menu');
+  const overlay = document.getElementById('mobile-overlay');
+  const closeBtn = document.querySelector('.mobile-menu-close');
+
+  function openMenu() {
+    mobileMenu.classList.add('open');
+    overlay.classList.add('show');
+    hamburger.classList.add('open');
+    hamburger.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeMenu() {
+    mobileMenu.classList.remove('open');
+    overlay.classList.remove('show');
+    hamburger.classList.remove('open');
+    hamburger.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  hamburger.addEventListener('click', () => {
+    mobileMenu.classList.contains('open') ? closeMenu() : openMenu();
+  });
+  closeBtn.addEventListener('click', closeMenu);
+  overlay.addEventListener('click', closeMenu);
+
+  // Close on ESC
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && mobileMenu.classList.contains('open')) closeMenu();
+  });
+
+  // Close on link click
+  mobileMenu.querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', closeMenu);
+  });
 
   // ── Smooth nav active state ──
   const sections = document.querySelectorAll('section[id], div[id]');
