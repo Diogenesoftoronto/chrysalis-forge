@@ -1,0 +1,16 @@
+graph TD
+    User[User task] --> Pi[pi agent]
+    Pi --> Prompts[pi/prompts]
+    Pi --> Skills[pi/skills]
+
+    Prompts --> Architect[architect.md]
+    Prompts --> Review[review.md]
+    Prompts --> Ship[ship.md]
+
+    Skills --> Ax[ax-workflows]
+    Skills --> TF[terminal-first]
+
+    Architect --> Out[.chrysalis/outputs]
+    Review --> Out
+    Ship --> Out
+    Ax --> Out

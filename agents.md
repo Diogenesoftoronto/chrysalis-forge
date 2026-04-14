@@ -2,6 +2,17 @@
 
 Chrysalis Forge defines agents as **Evolvable Modules** that combine logic, state, optimization, and self-improvement.
 
+## Pi Sibling Agent (`pi/`)
+
+Alongside the Racket harness, the repo ships a lightweight, terminal-first agent under `pi/`:
+
+- `pi/prompts/{architect,review,ship}.md` — task prompts for design, review, and implementation
+- `pi/skills/ax-workflows` — route structured planning/eval through Ax programs, falling back to deterministic heuristics
+- `pi/skills/terminal-first` — keep work on the shell path before any GUI detour
+- `pi/architecture.mmd` / `pi/architecture.svg` — oxdraw-rendered overview (`oxdraw -i pi/architecture.mmd -o pi/architecture.svg`)
+
+Pi artifacts land in `.chrysalis/outputs/` so they stay inspectable from the command line.
+
 ## Core Components
 
 ### 1. Signatures (`src/llm/dspy-core.rkt`)

@@ -177,6 +177,26 @@ The system uses **K-Nearest Neighbor search** in a geometric phenotype space to 
 
 The agent can also **set its own priority** mid-task using the `set_priority` tool if it determines that a task requires a different speed/cost profile.
 
+## Pi Agent
+
+A sibling, terminal-first agent lives under `pi/`. It ships three task prompts (`architect`, `review`, `ship`) and two skills (`ax-workflows`, `terminal-first`) that keep Chrysalis focused on shell workflows and deterministic artifacts under `.chrysalis/outputs/`.
+
+![Pi architecture](pi/architecture.svg)
+
+| Path | Purpose |
+|------|---------|
+| `pi/prompts/architect.md` | Design a concrete, terminal-first solution for a task |
+| `pi/prompts/review.md` | Severity-ordered code review of a proposed change |
+| `pi/prompts/ship.md` | Implement a task directly with minimal, verifiable changes |
+| `pi/skills/ax-workflows/SKILL.md` | Route structured planning/eval through Ax programs |
+| `pi/skills/terminal-first/SKILL.md` | Keep work focused on the shell before any GUI detour |
+
+The diagram is generated with [`oxdraw`](https://crates.io/crates/oxdraw) from `pi/architecture.mmd`:
+
+```bash
+oxdraw -i pi/architecture.mmd -o pi/architecture.svg
+```
+
 ## Documentation
 
 Comprehensive documentation is available in the `doc/` directory:
