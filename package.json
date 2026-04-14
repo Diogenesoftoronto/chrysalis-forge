@@ -27,7 +27,10 @@
   },
   "files": [
     "bin/",
-    "dist/",
+    "dist/ts/cli/",
+    "dist/ts/core/",
+    "dist/ts/pi/",
+    "dist/ts/runtime/pi.*",
     "pi/",
     "SYSTEM.md",
     "chrysalis.config.json",
@@ -58,7 +61,7 @@
     "dev": "bun --watch ts/cli/main.ts",
     "test": "bun test ./test/*.test.ts ./test/stores/*.test.ts",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit",
-    "prepack": "bun run build"
+    "prepack": "bun x tsc -p tsconfig.json"
   },
   "dependencies": {
     "@ax-llm/ax": "^19.0.44",
