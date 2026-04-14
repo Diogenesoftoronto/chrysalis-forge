@@ -89,12 +89,26 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 
 ## Installation
 
-Requires Racket v9.0+.
+### One-line install (recommended)
 
 ```bash
-git clone https://github.com/diogenes/chrysalis-forge.git
+curl -fsSL https://raw.githubusercontent.com/diogenesoftoronto/chrysalis-forge/main/scripts/install.sh | bash
+```
+
+Requires Node.js 20.19.0+. Options: `--version X.Y.Z`, `--force`, `--prefix DIR`.
+
+### npm
+
+```bash
+npm install -g chrysalis-forge
+```
+
+### From source
+
+```bash
+git clone https://github.com/diogenesoftoronto/chrysalis-forge.git
 cd chrysalis-forge
-/usr/local/racket/bin/raco pkg install --auto
+npm install && npm run build
 ```
 
 ## Usage

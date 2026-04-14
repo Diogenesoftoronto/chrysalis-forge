@@ -9,7 +9,6 @@ import { loadConfig, mergePiDefaults } from "../core/config.js";
 import { evolutionSystemPromptPath } from "../core/paths.js";
 import { ensureProjectScaffold } from "../core/project.js";
 import { sessionsDir } from "../core/paths.js";
-import { BUNDLED_APP_VERSION, BUNDLED_FILES } from "./bundled-assets.generated.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -42,7 +41,18 @@ function sourcePackageRoot(): string {
   return join(__dirname, "..", "..", "..");
 }
 
+async function loadBundledAssets() {
+  try {
+    return await import("./bundled-assets.generated.js");
+  } catch {
+    throw new Error(
+      "bundled-assets.generated.js not found. Run `bun run build:bundle-assets` to generate it."
+    );
+  }
+}
+
 async function ensureBundledPackageDir(): Promise<string> {
+  const { BUNDLED_APP_VERSION, BUNDLED_FILES } = await loadBundledAssets();
   const baseRoot =
     process.env.CHRYSALIS_BUNDLED_DIR ??
     (process.platform === "win32"

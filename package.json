@@ -27,10 +27,12 @@
   },
   "files": [
     "bin/",
+    "scripts/install.sh",
     "dist/ts/cli/",
     "dist/ts/core/",
     "dist/ts/pi/",
     "dist/ts/runtime/pi.*",
+    "dist/ts/runtime/bundled-assets.generated.*",
     "pi/",
     "SYSTEM.md",
     "chrysalis.config.json",

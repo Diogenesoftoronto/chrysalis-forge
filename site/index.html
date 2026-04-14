@@ -6,7 +6,7 @@
   <title>Chrysalis Forge — The Agent That Evolves</title>
 
   <!-- Primary Meta -->
-  <meta name="description" content="A self-optimizing AI agent harness in Racket. MAP-Elites evolutionary search, tiered sandboxing, parallel sub-agents. The agent that learns to be better at being an agent.">
+  <meta name="description" content="A self-optimizing AI agent harness. MAP-Elites evolutionary search, tiered sandboxing, parallel sub-agents. The agent that learns to be better at being an agent.">
   <meta name="author" content="UnAI / Diogenesoftoronto">
   <meta name="theme-color" content="#080810">
 
@@ -14,7 +14,7 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://chrysalis.dio.computer/">
   <meta property="og:title" content="Chrysalis Forge — The Agent That Evolves">
-  <meta property="og:description" content="A self-optimizing AI agent harness in Racket. MAP-Elites evolutionary search, tiered sandboxing, parallel sub-agents. Not trained. Evolved.">
+  <meta property="og:description" content="A self-optimizing AI agent harness. MAP-Elites evolutionary search, tiered sandboxing, parallel sub-agents. Not trained. Evolved.">
   <meta property="og:image" content="https://chrysalis.dio.computer/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -26,7 +26,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:url" content="https://chrysalis.dio.computer/">
   <meta name="twitter:title" content="Chrysalis Forge — The Agent That Evolves">
-  <meta name="twitter:description" content="A self-optimizing AI agent harness in Racket. MAP-Elites evolutionary search, tiered sandboxing, parallel sub-agents. Not trained. Evolved.">
+  <meta name="twitter:description" content="A self-optimizing AI agent harness. MAP-Elites evolutionary search, tiered sandboxing, parallel sub-agents. Not trained. Evolved.">
   <meta name="twitter:image" content="https://chrysalis.dio.computer/og-image.png">
   <meta name="twitter:image:alt" content="Chrysalis Forge — The Agent That Evolves">
 
@@ -1220,7 +1220,7 @@
 <section id="hero">
   <div class="hero-grid">
     <div class="hero-content">
-      <p class="hero-eyebrow">// Self-evolving agent harness · Built in Racket</p>
+      <p class="hero-eyebrow">// Self-evolving agent harness · Built in TypeScript</p>
       <h1 class="hero-title">
         <span class="line1">CHRYSALIS</span>
         <span class="line2">FORGE</span>
@@ -1236,7 +1236,7 @@
         <a href="https://github.com/Diogenesoftoronto/chrysalis-forge" class="btn btn-teal" target="_blank" rel="noopener">⬡ View Source</a>
         <a href="#evolution" class="btn btn-ghost">How it evolves →</a>
       </div>
-      <p class="hero-made">Built by <span>UnAI</span> · GPL-3.0 · <span>#lang racket</span></p>
+      <p class="hero-made">Built by <span>UnAI</span> · GPL-3.0 · <span>Node.js + TypeScript</span></p>
     </div>
 
     <div class="terminal-wrap" aria-label="Live terminal demo">
@@ -1683,39 +1683,24 @@
       <p class="section-label">Get Started</p>
       <h2 class="install-title">READY TO<br><span class="accent">INSTALL</span></h2>
       <p style="color: var(--dim); margin-bottom: 2rem; font-size: .92rem;">
-        Requires <a href="https://racket-lang.org" target="_blank" rel="noopener">Racket v9.0+</a>.
-        Three steps and you're running.
+        Requires <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 20.19+</a>.
+        One line and you're running.
       </p>
 
       <div class="install-step">
         <div class="install-step-num">1</div>
         <div class="install-step-body">
-          <h4>Clone the repository</h4>
+          <h4>Install with curl</h4>
           <div class="copy-block">
-            <code>git clone https://github.com/Diogenesoftoronto/chrysalis-forge.git</code>
-            <button class="copy-btn" onclick="copyCode(this, 'git clone https://github.com/Diogenesoftoronto/chrysalis-forge.git')">Copy</button>
+            <code>curl -fsSL https://chrysalis.dio.computer/install.sh | bash</code>
+            <button class="copy-btn" onclick="copyCode(this, 'curl -fsSL https://chrysalis.dio.computer/install.sh | bash')">Copy</button>
           </div>
-          <div class="copy-block">
-            <code>cd chrysalis-forge</code>
-            <button class="copy-btn" onclick="copyCode(this, 'cd chrysalis-forge')">Copy</button>
-          </div>
+          <p class="install-note">Or install via npm: <code>npm install -g chrysalis-forge</code></p>
         </div>
       </div>
 
       <div class="install-step">
         <div class="install-step-num">2</div>
-        <div class="install-step-body">
-          <h4>Install package dependencies</h4>
-          <div class="copy-block">
-            <code>raco pkg install --auto</code>
-            <button class="copy-btn" onclick="copyCode(this, 'raco pkg install --auto')">Copy</button>
-          </div>
-          <p class="install-note">This registers <code>chrysalis</code> and <code>chrysalis-client</code> as commands.</p>
-        </div>
-      </div>
-
-      <div class="install-step">
-        <div class="install-step-num">3</div>
         <div class="install-step-body">
           <h4>Configure your API key</h4>
           <div class="copy-block">
@@ -1731,10 +1716,10 @@
         <div class="install-step-body">
           <h4>Launch</h4>
           <div class="copy-block">
-            <code>chrysalis -i</code>
-            <button class="copy-btn" onclick="copyCode(this, 'chrysalis -i')">Copy</button>
+            <code>chrysalis shell</code>
+            <button class="copy-btn" onclick="copyCode(this, 'chrysalis shell')">Copy</button>
           </div>
-          <p class="install-note">Interactive mode. Start talking.</p>
+          <p class="install-note">Interactive shell mode. Start talking.</p>
         </div>
       </div>
 
@@ -1959,7 +1944,7 @@
     <div>
       <div class="footer-logo"><span class="chr">CHRYSALIS</span> <span class="forge">FORGE</span></div>
       <p class="footer-tagline">
-        A self-evolving agent harness in Racket. MAP-Elites optimization.
+        A self-evolving agent harness. MAP-Elites optimization.
         GEPA prompt evolution. Tiered sandboxing. The agent that gets better
         at being an agent.
       </p>
@@ -1992,7 +1977,7 @@
   </div>
 
   <div class="footer-bottom">
-    <p class="footer-license">GPL-3.0 · Chrysalis Forge · Built in <a href="https://racket-lang.org" target="_blank" rel="noopener">#lang racket</a></p>
+    <p class="footer-license">GPL-3.0 · Chrysalis Forge · Built with <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> + TypeScript</p>
     <p class="footer-lambda">λ <span>mutate → stage → archive → select → repeat</span></p>
   </div>
 </footer>
