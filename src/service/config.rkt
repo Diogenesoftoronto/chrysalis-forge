@@ -197,9 +197,9 @@
    
    ;; Models
    (ModelsConfig
-    (get-value 'models 'default "CHRYSALIS_DEFAULT_MODEL" "gpt-5.2")
+    (get-value 'models 'default "CHRYSALIS_DEFAULT_MODEL" "gpt-5.4")
     (get-list 'models 'allowed "CHRYSALIS_ALLOWED_MODELS" 
-              '("gpt-5.2" "gpt-4o" "claude-3-opus" "gemini-pro")))
+              '("gpt-5.4" "claude-4.6-opus" "gemini-3.1-pro-preview")))
    
    ;; Rate Limits
    (RateLimitsConfig

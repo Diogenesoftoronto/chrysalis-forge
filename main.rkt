@@ -63,7 +63,7 @@
            (with-handlers ([exn:fail? (λ (_) #f)])
              ((dynamic-require 'chrysalis-forge/src/service/config 'config-default-model))))
       (getenv "CHRYSALIS_DEFAULT_MODEL")
-      "gpt-5.2"))
+      "gpt-5.4"))
 
 ;; Override model-param with config-aware default (runtime.rkt provides the base)
 (model-param (get-default-model))
@@ -419,7 +419,7 @@
                                     [(equal? level "verbose") (current-debug-level 2)]
                                     [val (current-debug-level val)]
                                     [else (current-debug-level 1)]))]
-              [("-m" "--model") m "Set LLM Model (e.g., gpt-5.2, o1-preview)" (model-param m)]
+              [("-m" "--model") m "Set LLM Model (e.g., gpt-5.4, gemini-3.1-pro-preview)" (model-param m)]
               [("-p" "--priority") p "Set Runtime Priority (e.g., 'fast', 'cheap', or 'I need accuracy')" (priority-param p)]
               [("-i" "--interactive") "Enter Interactive Mode" (interactive-param #t)]
               [("--tui") "Launch full-screen TUI mode" (mode-param 'tui)]
