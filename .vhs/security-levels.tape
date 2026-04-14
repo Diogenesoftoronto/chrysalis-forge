@@ -6,6 +6,6 @@ Set Theme "catppuccin-mocha"
 Set Shell "bash"
 
 # ONE feature: Security level configuration
-Type "chrysalis --model glm-4.5-air --priority fast --perms 1 'List files in current directory'"
+Type "chrysalis --model gpt-5.2 --priority fast --perms 1 'List files in current directory'"
 Enter
 Sleep 8s

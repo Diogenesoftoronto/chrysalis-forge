@@ -1,0 +1,73 @@
+{
+  "name": "chrysalis-forge",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "Self-evolving terminal coding agent with Ax planning, MAP-Elites evolution, RDF knowledge graph, dynamic stores, and multi-voter consensus.",
+  "keywords": [
+    "pi-package",
+    "coding-agent",
+    "terminal-agent",
+    "ax",
+    "dspy",
+    "bun",
+    "self-evolving",
+    "rdf",
+    "map-elites",
+    "decomposition"
+  ],
+  "author": "Diogenes",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diogenesoftoronto/chrysalis-forge.git"
+  },
+  "homepage": "https://chrysalis.dio.computer",
+  "bin": {
+    "chrysalis": "./bin/chrysalis.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "pi/",
+    "SYSTEM.md",
+    "chrysalis.config.json",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "piConfig": {
+    "name": "chrysalis",
+    "configDir": ".chrysalis"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/ts/pi"
+    ],
+    "skills": [
+      "./pi/skills"
+    ],
+    "prompts": [
+      "./pi/prompts"
+    ]
+  },
+  "scripts": {
+    "build": "bun x tsc -p tsconfig.json",
+    "build:bundle-assets": "node scripts/generate-bundled-assets.mjs",
+    "build:binary": "bun x tsc -p tsconfig.json && bun run build:bundle-assets && bun x tsc -p tsconfig.json && bun build --compile ./dist/ts/cli/main.js --outfile dist/chrysalis",
+    "dev": "bun --watch ts/cli/main.ts",
+    "test": "bun test ./test/*.test.ts ./test/stores/*.test.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit",
+    "prepack": "bun run build"
+  },
+  "dependencies": {
+    "@ax-llm/ax": "^19.0.44",
+    "@mariozechner/pi-coding-agent": "^0.67.1",
+    "dotenv": "^17.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "bun-types": "^1.3.6",
+    "fast-check": "^4.6.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "chrysalis-forge-site",
+  "version": "1.0.0",
+  "description": "Chrysalis Forge — showcase site",
+  "scripts": {
+    "serve": "npx --yes serve@14 -l tcp://0.0.0.0:8080 ."
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

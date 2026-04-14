@@ -71,8 +71,8 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 |------|-------------|
 | `suggest_profile` | Get optimal profile for task type |
 | `profile_stats` | View learning data |
-| `evolve_system` | Trigger GEPA to improve prompts |
-| `evolve_harness` | Meta-Harness evolution: evolve harness strategy with novelty detection + bandit model selection |
+| `evolve_system` | Optional manual override for GEPA prompt evolution |
+| `evolve_harness` | Optional manual override for harness evolution with novelty detection + bandit model selection |
 | `log_feedback` | Log task results for learning |
 | `use_llm_judge` | LLM-as-judge evaluation against criteria |
 | `generate_tests` | LLM-powered test generation |
@@ -229,4 +229,3 @@ Start with [USAGE.md](doc/USAGE.md) for practical usage, then [API.md](doc/API.m
 ## License
 
 GPL-3.0
-

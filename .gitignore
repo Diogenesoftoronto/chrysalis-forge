@@ -13,3 +13,13 @@ compiled/
 
 # Dependency tracking files
 *.dep
+
+# Bun/TypeScript migration scaffold
+node_modules/
+dist/
+.chrysalis/
+.vite/
+.codex
+.sprite
+bun.lock
+data/

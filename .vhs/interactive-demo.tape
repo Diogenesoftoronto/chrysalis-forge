@@ -11,10 +11,10 @@ Enter
 Sleep 1s
 
 # Use a fast model for the demo
-Type "/config model glm-4.5-air"
+Type "/config model gpt-5.2"
 Enter
 Sleep 0.8s
-Type "/priority fast"
+Type "/config priority fast"
 Enter
 Sleep 0.6s
 
