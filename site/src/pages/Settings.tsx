@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
@@ -11,20 +12,36 @@ import {
 import {
   loadSettings,
   saveSettings,
+  type Provider,
   type Settings as S,
 } from "../lib/settings";
 import { listAnthropicModels } from "../lib/models";
 
 const MODELS = listAnthropicModels();
 
-export default function Settings() {
-  const [s, setS] = useState<S>(loadSettings);
-  const [saved, setSaved] = useState(false);
+type SaveState = { ok: boolean; settings: S; error?: string };
 
-  const update = (patch: Partial<S>) => {
-    setS((prev) => ({ ...prev, ...patch }));
-    setSaved(false);
+async function saveAction(
+  _prev: SaveState,
+  formData: FormData,
+): Promise<SaveState> {
+  const next: S = {
+    provider: (formData.get("provider") as Provider) ?? "anthropic",
+    model: (formData.get("model") as string) ?? "",
+    apiKey: (formData.get("apiKey") as string) ?? "",
   };
+  if (!next.apiKey.trim()) {
+    return { ok: false, settings: next, error: "API key is required." };
+  }
+  saveSettings(next);
+  return { ok: true, settings: next };
+}
+
+export default function Settings() {
+  const [state, formAction] = useActionState<SaveState, FormData>(saveAction, {
+    ok: false,
+    settings: loadSettings(),
+  });
 
   return (
     <div className="mx-auto max-w-xl space-y-6">
@@ -42,66 +59,83 @@ export default function Settings() {
         <CardHeader>
           <CardTitle>API credentials</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Provider
-            </label>
-            <Select
-              value={s.provider}
-              onChange={(e) =>
-                update({ provider: e.target.value as "anthropic" })
-              }
-            >
-              <option value="anthropic">Anthropic</option>
-            </Select>
-          </div>
+        <CardContent>
+          <form action={formAction} className="space-y-4">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="provider"
+                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                Provider
+              </label>
+              <Select
+                id="provider"
+                name="provider"
+                defaultValue={state.settings.provider}
+              >
+                <option value="anthropic">Anthropic</option>
+              </Select>
+            </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Model
-            </label>
-            <Select
-              value={s.model}
-              onChange={(e) => update({ model: e.target.value })}
-            >
-              {MODELS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Select>
-          </div>
+            <div className="space-y-1.5">
+              <label
+                htmlFor="model"
+                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                Model
+              </label>
+              <Select
+                id="model"
+                name="model"
+                defaultValue={state.settings.model}
+              >
+                {MODELS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </Select>
+            </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              API key
-            </label>
-            <Input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="sk-ant-..."
-              value={s.apiKey}
-              onChange={(e) => update({ apiKey: e.target.value })}
-            />
-          </div>
+            <div className="space-y-1.5">
+              <label
+                htmlFor="apiKey"
+                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                API key
+              </label>
+              <Input
+                id="apiKey"
+                name="apiKey"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="sk-ant-..."
+                defaultValue={state.settings.apiKey}
+              />
+            </div>
 
-          <div className="flex items-center gap-3 pt-2">
-            <Button
-              onClick={() => {
-                saveSettings(s);
-                setSaved(true);
-              }}
-            >
-              Save
-            </Button>
-            {saved && (
-              <span className="text-sm text-emerald-400">Saved.</span>
-            )}
-          </div>
+            <SaveRow state={state} />
+          </form>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function SaveRow({ state }: { state: SaveState }) {
+  const { pending } = useFormStatus();
+  return (
+    <div className="flex items-center gap-3 pt-2">
+      <Button type="submit" disabled={pending}>
+        {pending ? "Saving…" : "Save"}
+      </Button>
+      {state.error && (
+        <span className="text-sm text-destructive">{state.error}</span>
+      )}
+      {state.ok && !pending && (
+        <span className="text-sm text-emerald-400">Saved.</span>
+      )}
     </div>
   );
 }
