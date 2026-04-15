@@ -1,8 +1,16 @@
-import { useState, type ReactNode } from "react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { useState } from "react";
+import {
+  createRootRoute,
+  HeadContent,
+  Link,
+  Outlet,
+  Scripts,
+  useRouterState,
+} from "@tanstack/react-router";
 import { Menu, X } from "lucide-react";
-import { Button } from "./components/ui/button";
-import { cn } from "./lib/utils";
+import { Button } from "../components/ui/button";
+import { cn } from "../lib/utils";
+import appCss from "../styles.css?url";
 
 const LINKS = [
   { to: "/chat", label: "Chat" },
@@ -11,7 +19,50 @@ const LINKS = [
   { to: "/settings", label: "Settings" },
 ] as const;
 
-export default function Layout({ children }: { children: ReactNode }) {
+export const Route = createRootRoute({
+  head: () => ({
+    meta: [
+      { charSet: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1.0" },
+      { title: "Chrysalis Forge — Pi Agent" },
+      {
+        name: "description",
+        content:
+          "Browser UI for the pi agent: architect, review, and ship tasks with your own API key.",
+      },
+      { name: "theme-color", content: "#080810" },
+      { property: "og:type", content: "website" },
+      { property: "og:title", content: "Chrysalis Forge — Pi Agent" },
+      {
+        property: "og:description",
+        content: "Browser UI for the pi agent. Bring your own key.",
+      },
+      { property: "og:image", content: "/og-image.svg" },
+    ],
+    links: [
+      { rel: "icon", type: "image/svg+xml", href: "/og-image.svg" },
+      { rel: "stylesheet", href: appCss },
+    ],
+  }),
+  shellComponent: RootDocument,
+  component: RootLayout,
+});
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <Scripts />
+      </body>
+    </html>
+  );
+}
+
+function RootLayout() {
   const [open, setOpen] = useState(false);
   const { location } = useRouterState();
 
@@ -83,7 +134,9 @@ export default function Layout({ children }: { children: ReactNode }) {
         )}
       </header>
 
-      <main className="container flex-1 py-8">{children}</main>
+      <main className="container flex-1 py-8">
+        <Outlet />
+      </main>
     </div>
   );
 }

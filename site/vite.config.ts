@@ -1,9 +1,15 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
 import path from "node:path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    tanstackStart({
+      spa: { enabled: true },
+    }),
+    viteReact(),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
@@ -15,7 +21,6 @@ export default defineConfig({
     port: 5173,
   },
   build: {
-    outDir: "dist",
     sourcemap: true,
   },
 });
