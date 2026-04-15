@@ -1,5 +1,5 @@
-import { useActionState } from "react";
-import { useFormStatus } from "react-dom";
+import { useState } from "react";
+import { useForm } from "@tanstack/react-form";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
@@ -18,29 +18,17 @@ import {
 import { listAnthropicModels } from "../lib/models";
 
 const MODELS = listAnthropicModels();
-
-type SaveState = { ok: boolean; settings: S; error?: string };
-
-async function saveAction(
-  _prev: SaveState,
-  formData: FormData,
-): Promise<SaveState> {
-  const next: S = {
-    provider: (formData.get("provider") as Provider) ?? "anthropic",
-    model: (formData.get("model") as string) ?? "",
-    apiKey: (formData.get("apiKey") as string) ?? "",
-  };
-  if (!next.apiKey.trim()) {
-    return { ok: false, settings: next, error: "API key is required." };
-  }
-  saveSettings(next);
-  return { ok: true, settings: next };
-}
+const PROVIDERS: Provider[] = ["anthropic"];
 
 export default function Settings() {
-  const [state, formAction] = useActionState<SaveState, FormData>(saveAction, {
-    ok: false,
-    settings: loadSettings(),
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const form = useForm({
+    defaultValues: loadSettings() as S,
+    onSubmit: async ({ value }) => {
+      saveSettings(value);
+      setSavedAt(Date.now());
+    },
   });
 
   return (
@@ -60,62 +48,103 @@ export default function Settings() {
           <CardTitle>API credentials</CardTitle>
         </CardHeader>
         <CardContent>
-          <form action={formAction} className="space-y-4">
-            <div className="space-y-1.5">
-              <label
-                htmlFor="provider"
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              >
-                Provider
-              </label>
-              <Select
-                id="provider"
-                name="provider"
-                defaultValue={state.settings.provider}
-              >
-                <option value="anthropic">Anthropic</option>
-              </Select>
-            </div>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setSavedAt(null);
+              form.handleSubmit();
+            }}
+          >
+            <form.Field name="provider">
+              {(field) => (
+                <Labeled id={field.name} label="Provider">
+                  <Select
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) =>
+                      field.handleChange(e.target.value as Provider)
+                    }
+                  >
+                    {PROVIDERS.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </Select>
+                </Labeled>
+              )}
+            </form.Field>
 
-            <div className="space-y-1.5">
-              <label
-                htmlFor="model"
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              >
-                Model
-              </label>
-              <Select
-                id="model"
-                name="model"
-                defaultValue={state.settings.model}
-              >
-                {MODELS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            <form.Field name="model">
+              {(field) => (
+                <Labeled id={field.name} label="Model">
+                  <Select
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                  >
+                    {MODELS.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </Select>
+                </Labeled>
+              )}
+            </form.Field>
 
-            <div className="space-y-1.5">
-              <label
-                htmlFor="apiKey"
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-              >
-                API key
-              </label>
-              <Input
-                id="apiKey"
-                name="apiKey"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="sk-ant-..."
-                defaultValue={state.settings.apiKey}
-              />
-            </div>
+            <form.Field
+              name="apiKey"
+              validators={{
+                onChange: ({ value }) =>
+                  !value?.trim() ? "API key is required." : undefined,
+              }}
+            >
+              {(field) => (
+                <Labeled id={field.name} label="API key">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="sk-ant-..."
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                  />
+                  {field.state.meta.isTouched &&
+                    field.state.meta.errors.length > 0 && (
+                      <span className="text-xs text-destructive">
+                        {field.state.meta.errors.join(", ")}
+                      </span>
+                    )}
+                </Labeled>
+              )}
+            </form.Field>
 
-            <SaveRow state={state} />
+            <form.Subscribe
+              selector={(s) => ({
+                canSubmit: s.canSubmit,
+                isSubmitting: s.isSubmitting,
+              })}
+            >
+              {({ canSubmit, isSubmitting }) => (
+                <div className="flex items-center gap-3 pt-2">
+                  <Button type="submit" disabled={!canSubmit || isSubmitting}>
+                    {isSubmitting ? "Saving…" : "Save"}
+                  </Button>
+                  {savedAt && !isSubmitting && (
+                    <span className="text-sm text-emerald-400">Saved.</span>
+                  )}
+                </div>
+              )}
+            </form.Subscribe>
           </form>
         </CardContent>
       </Card>
@@ -123,19 +152,24 @@ export default function Settings() {
   );
 }
 
-function SaveRow({ state }: { state: SaveState }) {
-  const { pending } = useFormStatus();
+function Labeled({
+  id,
+  label,
+  children,
+}: {
+  id: string;
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center gap-3 pt-2">
-      <Button type="submit" disabled={pending}>
-        {pending ? "Saving…" : "Save"}
-      </Button>
-      {state.error && (
-        <span className="text-sm text-destructive">{state.error}</span>
-      )}
-      {state.ok && !pending && (
-        <span className="text-sm text-emerald-400">Saved.</span>
-      )}
+    <div className="space-y-1.5">
+      <label
+        htmlFor={id}
+        className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+      >
+        {label}
+      </label>
+      {children}
     </div>
   );
 }
