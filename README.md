@@ -1,10 +1,10 @@
 # Chrysalis Forge
 
-An evolvable, safety-gated Racket agent framework with DSPy-style optimization and self-improving capabilities.
+An evolvable, safety-gated agent framework with DSPy-style optimization and self-improving capabilities.
 
 ## Overview
 
-Chrysalis Forge is a Racket-based environment for building and optimizing autonomous agents. It combines modern LLM integration with the safety and expressiveness of the Racket ecosystem.
+Chrysalis Forge is a TypeScript-based environment for building and optimizing autonomous agents. It combines modern LLM integration with the Pi agent framework and a powerful evolution engine.
 
 ![Features Overview](.vhs/features-overview.gif)
 
@@ -17,39 +17,47 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 - **MAP-Elites Optimization**: Evolutionary optimization targeting cost, latency, and token efficiency.
 - **Grounded Scoring**: Automated grading based on precision, speed ($/ms), and resource consumption.
 - **Tiered Sandboxing**: Four levels of security isolation for code execution.
-- **25 Built-in Tools**: File operations, code search, git, jj (Jujutsu), and self-evolution.
+- **66+ Built-in Tools**: File operations, code search, git, jj (Jujutsu), web search, test generation, LLM-as-judge evaluation, and self-evolution.
+- **Evolvable Tool System**: Tools themselves can be evolved at runtime via feedback-driven mutation with novelty gating and variant archiving.
 - **Parallel Sub-Agents**: Spawn concurrent tasks with specialized tool profiles.
 - **Auto-Correction Loop**: Retry failed code execution with automatic fixes.
 - **Vector Memory & RDF**: Semantic search and knowledge graph integration.
+- **Dynamic Stores**: Key-value, log, set, and counter stores for persistent agent state.
+- **File Rollback**: Automatic file versioning with instant undo.
 
 ## Tool Categories
 
-### File & Code Tools
+The LLM agent can directly call these tools. Each tool is registered with the Pi runtime and available in every session.
+
+### File & Code Tools (Pi built-in)
 | Tool | Description |
 |------|-------------|
-| `read_file` | Read file contents |
-| `write_file` | Write/create files |
-| `patch_file` | Surgical line-range edits |
-| `preview_diff` | Preview changes before writing |
-| `list_dir` | Directory listing |
-| `grep_code` | Regex search across files |
+| `read` | Read file contents |
+| `write` | Create/overwrite files |
+| `edit` | Surgical text replacement in files |
+| `bash` | Execute shell commands |
+| `grep` | Regex search across files |
+| `find` | Find files by name/pattern |
+| `ls` | Directory listing |
 
 ### Git Tools
 | Tool | Description |
 |------|-------------|
 | `git_status` | Repository status |
-| `git_diff` | Show changes |
+| `git_diff` | Show staged/unstaged changes |
 | `git_log` | Commit history |
 | `git_commit` | Stage and commit |
 | `git_checkout` | Branch operations |
+| `git_add` | Stage files |
+| `git_branch` | List/create/delete branches |
 
-### Jujutsu (jj) Tools — Next-Gen VCS
+### Jujutsu (jj) Tools
 | Tool | Description |
 |------|-------------|
 | `jj_status` | Current state |
 | `jj_log` | Commit graph |
 | `jj_diff` | Show changes |
-| `jj_undo` | Undo last operation (instant rollback!) |
+| `jj_undo` | Undo last operation |
 | `jj_op_log` | Operation history |
 | `jj_op_restore` | Restore to any past state |
 | `jj_workspace_add` | Create parallel worktree |
@@ -69,23 +77,90 @@ Chrysalis Forge is a Racket-based environment for building and optimizing autono
 ### Self-Evolution Tools
 | Tool | Description |
 |------|-------------|
+| `evolve_system` | Evolve system prompt via GEPA mutation |
+| `evolve_meta` | Evolve the meta/optimizer prompt |
+| `evolve_harness` | Mutate harness strategy (12 evolvable fields) |
+| `log_feedback` | Log task results for profile learning |
 | `suggest_profile` | Get optimal profile for task type |
-| `profile_stats` | View learning data |
-| `evolve_system` | Optional manual override for GEPA prompt evolution |
-| `evolve_harness` | Optional manual override for harness evolution with novelty detection + bandit model selection |
-| `log_feedback` | Log task results for learning |
-| `use_llm_judge` | LLM-as-judge evaluation against criteria |
-| `generate_tests` | LLM-powered test generation |
-| `set_priority` | Autonomously switch performance profile (`fast`, `cheap`, etc.) |
+| `profile_stats` | View profile performance data |
+| `archive_list` | List MAP-Elites archived variants |
+| `evolution_stats` | Current evolution state summary |
 
-### Web Search Tools (`web-search.rkt`)
+### Decomposition Tools
 | Tool | Description |
 |------|-------------|
-| `web_search` | Exa AI semantic search (falls back to curl/DuckDuckGo) |
-| `web_fetch` | Fetch URL content via curl |
-| `web_search_news` | Search recent news with date filtering |
+| `decompose_task` | Break task into subtasks with dependencies |
+| `classify_task` | Classify task type (refactor/debug/implement/etc.) |
+| `decomp_vote` | First-to-K voting on decomposition alternatives |
 
-**Requires**: `EXA_API_KEY` env var for Exa API, otherwise uses curl fallback.
+### Judge & Evaluation Tools
+| Tool | Description |
+|------|-------------|
+| `use_llm_judge` | Evaluate code/text using LLM-as-judge with configurable criteria and pass/fail threshold |
+| `judge_quality` | Judge code quality across correctness, maintainability, and best practices |
+
+### Test Generation Tools
+| Tool | Description |
+|------|-------------|
+| `generate_tests` | Generate unit tests from source files using LLM with framework auto-detection |
+| `generate_test_cases` | Generate specific test cases for a function with concrete inputs/outputs |
+
+### Priority & Profile Tools
+| Tool | Description |
+|------|-------------|
+| `set_priority` | Set execution profile (fast/cheap/best/verbose) with reason tracking |
+| `get_priority` | Get current active execution profile |
+| `suggest_priority` | Suggest optimal profile based on task description or type |
+
+### Tool Evolution Tools
+| Tool | Description |
+|------|-------------|
+| `evolve_tool` | Evolve a tool's description/parameters via feedback-driven mutation |
+| `list_tools` | List all registered tools with enabled/disabled status |
+| `tool_variants` | List evolution variants for tools |
+| `select_tool_variant` | Select a specific variant as active |
+| `enable_tool` | Enable a disabled tool |
+| `disable_tool` | Disable a tool |
+| `tool_stats` | Get tool registry statistics |
+| `tool_evolution_stats` | Get tool evolution state and variant counts |
+
+### RDF & Memory Tools
+| Tool | Description |
+|------|-------------|
+| `rdf_load` | Load triples file into a named graph |
+| `rdf_query` | Query knowledge graph with pattern matching |
+| `rdf_insert` | Insert a triple into the store |
+
+### Web Tools
+| Tool | Description |
+|------|-------------|
+| `web_fetch` | Fetch URL content (cached) |
+| `web_search` | Exa AI semantic search |
+
+**Requires**: `EXA_API_KEY` env var for Exa web search.
+
+### Store Tools
+| Tool | Description |
+|------|-------------|
+| `store_create` | Create kv/log/set/counter store |
+| `store_list` | List dynamic stores |
+| `store_get` | Read from a store |
+| `store_set` | Write to a store |
+| `store_rm` | Remove a key from a store |
+| `store_dump` | Dump entire store contents |
+| `store_delete` | Delete a store |
+
+### Rollback & Cache Tools
+| Tool | Description |
+|------|-------------|
+| `file_rollback` | Restore file to previous version |
+| `file_rollback_list` | List available rollback versions |
+| `cache_get` | Retrieve cached value |
+| `cache_set` | Store value with TTL and tags |
+| `cache_invalidate` | Remove cached entry |
+| `cache_invalidate_tag` | Remove entries by tag |
+| `cache_stats` | Cache statistics |
+| `cache_cleanup` | Remove expired entries |
 
 ## Installation
 
@@ -117,7 +192,7 @@ npm install && npm run build
 
 ### Interactive Mode
 ```bash
-chrysalis -i
+chrysalis shell
 ```
 
 ![Interactive Demo](.vhs/interactive-demo.gif)
@@ -219,12 +294,10 @@ Comprehensive documentation is available in the `doc/` directory:
 |----------|-------------|
 | [**THEORY.md**](doc/THEORY.md) | Theoretical foundations — GEPA, MAP-Elites, Grassmann flows, MAKER, Graphiti/Zep, Recursive LMs |
 | [**ARCHITECTURE.md**](doc/ARCHITECTURE.md) | System architecture — layers, data flow, DSPy programming model, phenotype spaces |
-| [**USAGE.md**](doc/USAGE.md) | Usage guide — installation, CLI, tools, modes, security, self-evolution |
-| [**API.md**](doc/API.md) | API reference — data structures, functions, extending the system |
+| [**API.md**](doc/API.md) | API reference — all exported functions and types across modules |
 | [**CONFIG.md**](doc/CONFIG.md) | Configuration reference — TOML settings, environment variables |
-| [**SERVICE.md**](doc/SERVICE.md) | Service layer — authentication, billing, rate limiting, API router |
+| [**USAGE.md**](doc/USAGE.md) | Practical usage — commands, workflows, examples |
 | [**RDF-SEMANTIC.md**](doc/RDF-SEMANTIC.md) | Semantic memory — vector store, RDF knowledge graphs |
-| [**geometric-decomposition.md**](doc/geometric-decomposition.md) | Deep dive into the geometric decomposition system |
 
 ### For Researchers
 

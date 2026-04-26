@@ -11,7 +11,7 @@ Configuration is loaded in this order (later sources override earlier):
 1. **Default values** — Sensible defaults built into the code
 2. **`~/.chrysalis/config.toml`** — User-level configuration
 3. **`chrysalis.toml`** — Project-level configuration (current directory)
-4. **Custom path** — Via `--config` CLI flag or `init-config!` function
+4. **Custom path** — Via `--config` CLI flag or `loadConfig()` function
 5. **Environment variables** — Always highest priority
 
 ---
@@ -316,23 +316,19 @@ environment:
 
 ## Programmatic Access
 
-```racket
-(require "src/service/config.rkt")
+```ts
+import { loadConfig } from "../ts/core/config.ts";
 
-;; Initialize configuration
-(init-config! "path/to/chrysalis.toml")
+const config = loadConfig("path/to/chrysalis.toml");
 
-;; Access configuration values
-(config-port)           ; → 8080
-(config-host)           ; → "127.0.0.1"
-(config-database-url)   ; → "~/.chrysalis/chrysalis.db"
-(config-secret-key)     ; → "..." or insecure default
-(config-default-model)  ; → "gpt-5.2"
-(config-allowed-models) ; → '("gpt-5.2" "gpt-4o" ...)
-(config-autumn-key)     ; → "..." or #f
-(config-free-daily-limit) ; → 100
+config.port;            // → 8080
+config.host;            // → "127.0.0.1"
+config.databaseUrl;     // → "~/.chrysalis/chrysalis.db"
+config.secretKey;       // → "..." or insecure default
+config.defaultModel;    // → "gpt-5.2"
+config.allowedModels;   // → ["gpt-5.2", "gpt-4o", ...]
+config.freeDailyLimit;  // → 100
 
-;; Get rate limit for a tier
-(config-rate-limit 'pro)
-; → (RateLimitTier 60 1000)
+config.rateLimit("pro");
+// → { requestsPerMinute: 60, tokensPerDay: 1000 }
 ```

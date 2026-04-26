@@ -6,7 +6,7 @@ Set Theme "catppuccin-mocha"
 Set Shell "bash"
 
 # Show interactive mode with new commands
-Type "chrysalis -i"
+Type "chrysalis shell"
 Enter
 Sleep 1s
 

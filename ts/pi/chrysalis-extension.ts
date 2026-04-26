@@ -21,6 +21,20 @@ import { cacheStats } from "../core/stores/cache-store.js";
 import { executeRdfTool } from "../core/tools/rdf-tools.js";
 import { classifyTask, runDecomposition } from "../core/decomp-planner.js";
 import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump, storeDescribe } from "../core/stores/store-registry.js";
+import { EVOLUTION_TOOL_DEFINITIONS, executeEvolutionTool } from "../core/tools/evolution-tools.js";
+import { GIT_TOOL_DEFINITIONS, executeGitTool } from "../core/tools/git-tools.js";
+import { JJ_TOOL_DEFINITIONS, executeJjTool } from "../core/tools/jj-tools.js";
+import { WEB_TOOL_DEFINITIONS, executeWebTool } from "../core/tools/web-tools.js";
+import { SUB_AGENT_TOOL_DEFINITIONS, executeSubAgentTool } from "../core/tools/sub-agent-tools.js";
+import { STORE_TOOL_DEFINITIONS, executeStoreTool } from "../core/tools/store-tools.js";
+import { ROLLBACK_TOOL_DEFINITIONS, executeRollbackTool } from "../core/tools/rollback-tools.js";
+import { CACHE_TOOL_DEFINITIONS, executeCacheTool } from "../core/tools/cache-tools.js";
+import { DECOMP_TOOL_DEFINITIONS, executeDecompTool } from "../core/tools/decomp-tools.js";
+import { RDF_TOOL_DEFINITIONS } from "../core/tools/rdf-tools.js";
+import { JUDGE_TOOL_DEFINITIONS, executeJudgeTool } from "../core/tools/judge-tools.js";
+import { TEST_TOOL_DEFINITIONS, executeTestTool } from "../core/tools/test-tools.js";
+import { PRIORITY_TOOL_DEFINITIONS, executePriorityTool } from "../core/tools/priority-tools.js";
+import { EVOLVER_TOOL_DEFINITIONS, executeEvolverTool } from "../core/tools/evolver-tools.js";
 
 function notify(ctx: any, message: string): void {
   ctx.ui.notify(message, "info");
@@ -30,7 +44,52 @@ function textFromArgs(args: string | string[]): string {
   return (Array.isArray(args) ? args.join(" ") : String(args ?? "")).trim();
 }
 
+const ALL_TOOL_GROUPS: Array<{
+  definitions: Array<{ name: string; description: string; parameters: any }>;
+  execute: (cwd: string, name: string, args: Record<string, unknown>) => Promise<string>;
+}> = [
+  { definitions: EVOLUTION_TOOL_DEFINITIONS, execute: executeEvolutionTool },
+  { definitions: GIT_TOOL_DEFINITIONS, execute: executeGitTool },
+  { definitions: JJ_TOOL_DEFINITIONS, execute: executeJjTool },
+  { definitions: WEB_TOOL_DEFINITIONS, execute: executeWebTool },
+  { definitions: SUB_AGENT_TOOL_DEFINITIONS, execute: executeSubAgentTool },
+  { definitions: STORE_TOOL_DEFINITIONS, execute: executeStoreTool },
+  { definitions: ROLLBACK_TOOL_DEFINITIONS, execute: executeRollbackTool },
+  { definitions: CACHE_TOOL_DEFINITIONS, execute: executeCacheTool },
+  { definitions: RDF_TOOL_DEFINITIONS, execute: executeRdfTool },
+  { definitions: DECOMP_TOOL_DEFINITIONS, execute: executeDecompTool },
+  { definitions: JUDGE_TOOL_DEFINITIONS, execute: executeJudgeTool },
+  { definitions: TEST_TOOL_DEFINITIONS, execute: executeTestTool },
+  { definitions: PRIORITY_TOOL_DEFINITIONS, execute: executePriorityTool },
+  { definitions: EVOLVER_TOOL_DEFINITIONS, execute: executeEvolverTool }
+];
+
+function registerToolGroup(pi: any, group: typeof ALL_TOOL_GROUPS[number]): void {
+  for (const def of group.definitions) {
+    pi.registerTool({
+      name: def.name,
+      label: def.name.replace(/_/g, " "),
+      description: def.description,
+      parameters: def.parameters,
+      async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any): Promise<{ content: Array<{ type: string; text: string }> }> {
+        try {
+          const result = await group.execute(ctx.cwd, def.name, params);
+          return { content: [{ type: "text", text: result }] };
+        } catch (err) {
+          return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+        }
+      }
+    });
+  }
+}
+
 export default function chrysalisExtension(pi: any): void {
+  // Register all LLM-callable tools
+  for (const group of ALL_TOOL_GROUPS) {
+    registerToolGroup(pi, group);
+  }
+
+  // Slash commands (human-initiated, same as before)
   pi.registerCommand("plan", {
     description: "Generate a Chrysalis task plan artifact and open it in the editor.",
     handler: async (args: string[], ctx: any) => {
@@ -361,9 +420,10 @@ export default function chrysalisExtension(pi: any): void {
   pi.on("session_start", async (_event: any, ctx: any) => {
     const state = await loadProfileState(ctx.cwd);
     const evolution = await loadEvolutionState(ctx.cwd);
+    const toolCount = ALL_TOOL_GROUPS.reduce((n, g) => n + g.definitions.length, 0);
     notify(
       ctx,
-      `Chrysalis loaded. Autonomous evolution runs on session start and planning. Commands: /plan, /profile, /evolve, /meta-evolve, /harness, /archive, /stats, /outputs, /sessions, /session, /threads, /thread, /rollback, /cache-stats, /rdf-load, /rdf-query, /rdf-insert, /decomp, /stores, /store. Active profile: ${state.activeProfile}.`
+      `Chrysalis loaded. ${toolCount} LLM tools registered. Autonomous evolution runs on session start and planning. Commands: /plan, /profile, /evolve, /meta-evolve, /harness, /archive, /stats, /outputs, /sessions, /session, /threads, /thread, /rollback, /cache-stats, /rdf-load, /rdf-query, /rdf-insert, /decomp, /stores, /store. Active profile: ${state.activeProfile}.`
     );
     for (const line of summarizeEvolutionState(evolution)) {
       notify(ctx, line);

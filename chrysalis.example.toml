@@ -1,0 +1,75 @@
+# Chrysalis Forge Service Configuration
+# Copy this to chrysalis.toml and customize for your deployment
+
+[server]
+port = 8080
+host = "127.0.0.1"  # Use "0.0.0.0" to listen on all interfaces
+
+[database]
+# SQLite (default - good for single server)
+url = "~/.chrysalis/chrysalis.db"
+
+# PostgreSQL (for production multi-server deployments)
+# url = "postgresql://user:password@localhost:5432/chrysalis"
+
+pool_size = 5
+
+[auth]
+# IMPORTANT: Generate a strong secret key for production
+# Use: openssl rand -hex 32
+secret_key = "${CHRYSALIS_SECRET_KEY}"
+
+# Session token lifetime in seconds (default: 24 hours)
+session_lifetime = 86400
+
+# Allow new user registration
+enable_registration = true
+
+# Require email verification before login
+require_email_verify = false
+
+[billing]
+# Autumn billing integration (https://useautumn.com)
+# Get your API key from: https://app.useautumn.com/settings/api
+autumn_secret_key = "${AUTUMN_SECRET_KEY}"
+
+# Stripe webhook secret for handling subscription events
+stripe_webhook_secret = "${STRIPE_WEBHOOK_SECRET}"
+
+# Free tier limits
+free_tier_daily_limit = 100
+
+[models]
+# Default model for new sessions
+default = "gpt-5.2"
+
+# Allowed models (users can only select from this list)
+allowed = ["gpt-5.2", "gpt-4o", "gpt-4o-mini", "claude-3-opus", "claude-3-sonnet", "gemini-pro"]
+
+[rate_limits]
+# Per-tier rate limits
+# requests_per_minute = 0 means unlimited
+# requests_per_day = -1 means unlimited
+
+free = { requests_per_minute = 10, requests_per_day = 100 }
+pro = { requests_per_minute = 60, requests_per_day = 1000 }
+team = { requests_per_minute = 120, requests_per_day = -1 }
+enterprise = { requests_per_minute = 300, requests_per_day = -1 }
+
+[security]
+# CORS allowed origins (* for development)
+allowed_origins = ["http://localhost:3000", "http://localhost:8080"]
+
+# Trusted proxy IPs (for correct client IP detection behind load balancers)
+trusted_proxies = ["127.0.0.1"]
+
+# Enable LLM security judge for sensitive operations
+# enable_llm_judge = true
+# llm_judge_model = "gpt-5.2"
+
+[logging]
+# Log level: debug, info, warn, error
+level = "info"
+
+# Log file path (optional)
+# file = "/var/log/chrysalis/service.log"

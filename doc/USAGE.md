@@ -8,17 +8,29 @@ This guide walks through the practical aspects of using Chrysalis Forge—from i
 
 ### Installation
 
-Chrysalis Forge requires Racket version 9.0 or later. If you don't have Racket installed, grab it from [racket-lang.org](https://racket-lang.org/). You'll also want git for cloning the repository, and curl comes in handy as a fallback for web search when the Exa API isn't available.
+Chrysalis Forge is a TypeScript project that runs on Node.js 20.19 or later. You'll also want git, and curl comes in handy as a fallback for web search when the Exa API isn't available.
 
-Clone and install with:
+The fastest path is the one-line installer:
 
 ```bash
-git clone https://github.com/Diogenesoftoronto/chrysalis-forge.git
-cd chrysalis-forge
-raco pkg install --auto
+curl -fsSL https://raw.githubusercontent.com/diogenesoftoronto/chrysalis-forge/main/scripts/install.sh | bash
 ```
 
-This registers two commands: `chrysalis` (the full agent) and `chrysalis-client` (a lightweight client for connecting to remote agent services). The installation process pulls in all Racket dependencies automatically.
+Or install from npm:
+
+```bash
+npm install -g chrysalis-forge
+```
+
+From source:
+
+```bash
+git clone https://github.com/diogenesoftoronto/chrysalis-forge.git
+cd chrysalis-forge
+npm install && npm run build
+```
+
+This registers the `chrysalis` command.
 
 ### Configuration
 
@@ -77,7 +89,7 @@ Use `/config list` to see all current settings, and `/models` to discover availa
 The most common way to use Chrysalis Forge is interactive mode, which drops you into a REPL where you can have a conversation with the agent:
 
 ```bash
-chrysalis -i
+chrysalis shell
 ```
 
 Once inside, you can type natural language requests. The agent reads your input, reasons about it, calls tools as needed, and responds. A typical session might look like:
@@ -87,7 +99,7 @@ Once inside, you can type natural language requests. The agent reads your input,
 [AGENT uses list_dir, displays results]
 
 [USER]> Show me how the optimizer works
-[AGENT uses read_file on src/core/optimizer-gepa.rkt, explains the code]
+[AGENT uses read_file on ts/core/evolution.ts, explains the code]
 
 [USER]> I think it should log more information. Can you add debug output?
 [AGENT uses patch_file to add logging, shows diff, asks for confirmation]
@@ -113,7 +125,6 @@ Several commands are available within the REPL (all start with `/`):
 - `/session list` - List all sessions
 - `/session new <name>` - Create a new session
 - `/session switch <name>` - Switch to a different session
-- `/raco <args>` - Run raco commands
 - `/init` - Initialize project and generate agents.md
 
 ### Single-Task Mode
@@ -128,7 +139,7 @@ The agent runs, produces output, and exits. This is useful for automation or whe
 
 ```bash
 # Allow file modifications (security level 2)
-chrysalis --perms 2 "Fix the type error in parser.rkt"
+chrysalis --perms 2 "Fix the type error in ts/core/config.ts"
 
 # Use a specific model with speed priority
 chrysalis --model gpt-5.2 --priority fast "Summarize the README"
@@ -146,12 +157,6 @@ chrysalis --serve --serve-port 8080
 ```
 
 This exposes an OpenAI-compatible API at `/v1/chat/completions`, meaning existing tools that speak the OpenAI protocol can connect directly. The service also provides endpoints for user management (`/auth/register`, `/auth/login`), higher-level **thread** and **project** management (`/v1/threads`, `/v1/projects`), and lower-level session tracking (`/v1/sessions`) which is now mostly an internal implementation detail.
-
-Connect with the included client:
-
-```bash
-chrysalis-client --url http://localhost:8080 --api-key your-jwt-token
-```
 
 Client applications that want durable conversation state should model it in terms of **threads** (and optionally **projects**) rather than raw sessions; the server automatically rotates and archives underlying sessions while keeping thread IDs stable.
 
@@ -191,7 +196,7 @@ Security levels add another dimension of control, governing *how* dangerous oper
 
 **Level 0** is pure sandbox—no execution of anything that could affect the system.
 
-**Level 1** allows safe operations: reading files, running sandboxed Racket expressions, basic network reads.
+**Level 1** allows safe operations: reading files and basic network reads.
 
 **Level 2** permits file writes, but requires confirmation. Every write operation prompts you before executing.
 
@@ -227,13 +232,13 @@ The core file tools are `read_file`, `write_file`, `patch_file`, `list_dir`, and
 What's notable is `patch_file`—rather than rewriting entire files, the agent can make surgical edits to specific line ranges. This produces cleaner diffs and reduces the risk of unintended changes. When the agent decides to patch, it shows you the diff before applying:
 
 ```
-[AGENT proposes patch to src/parser.rkt, lines 45-52]
---- a/src/parser.rkt
-+++ b/src/parser.rkt
+[AGENT proposes patch to ts/core/config.ts, lines 45-52]
+--- a/ts/core/config.ts
++++ b/ts/core/config.ts
 @@ -45,8 +45,10 @@
-   (define tokens (tokenize input))
-+  (log-debug "Tokenized: ~a tokens" (length tokens))
-   (parse-tokens tokens))
+   const tokens = tokenize(input);
++  debug(`Tokenized: ${tokens.length} tokens`);
+   return parseTokens(tokens);
 
 Apply this change? [y/N]
 ```
@@ -420,8 +425,8 @@ For complex tasks, explicitly request parallel execution:
 
 ```
 Spawn three sub-agents:
-1. A researcher to analyze src/parser.rkt
-2. A researcher to analyze src/lexer.rkt  
+1. A researcher to analyze ts/core/decomp-planner.ts
+2. A researcher to analyze ts/core/evolution.ts
 3. An editor to prepare a refactoring plan
 
 Wait for all to complete, then synthesize their findings.
