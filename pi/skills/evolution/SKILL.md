@@ -1,3 +1,7 @@
+---
+description: Prompt evolution, harness mutation, archive inspection, and profile-learning workflows.
+---
+
 # Evolution Workflows
 
 Use this skill for prompt evolution, harness mutation, archive inspection, and profile-learning tasks.

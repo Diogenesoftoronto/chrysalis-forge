@@ -41,22 +41,21 @@ function usage(): void {
   archive                     List archived evolution variants
   stats                       Print profile-learning statistics
   outputs                     List generated artifacts under .chrysalis/outputs
-  sessions                    List sessions
-  session <name>              Switch to a session
-  threads                     List threads
-  thread <id>                 Switch to a thread
+  sessions [name]            List sessions or switch to one
+  threads [id]               List threads or switch to one
   rollback <path> [steps]     Rollback a file (default: 1 step)
   cache-stats                 Show cache statistics
   rdf-load <path> <id>        Load triples into an RDF graph
   rdf-query <query> [id]      Query the RDF knowledge graph
   rdf-insert <s> <p> <o> [g] Insert a triple into the RDF store
-  stores [ns]                 List dynamic stores (optional namespace filter)
-  store create <n> <kind>    Create a store (kv|log|set|counter)
-  store delete <n> [ns]       Delete a dynamic store
-  store get <n> <field> [ns]  Get a value from a store
-  store set <n> <f> <v> [ns]  Set a value in a store
-  store rm <n> <field> [ns]   Remove a field/entry from a store
-  store dump <n> [ns]         Dump full store contents
+  stores [subcommand] ...    List or manage dynamic stores
+    stores                    List dynamic stores
+    stores create <n> <kind> Create a store (kv|log|set|counter)
+    stores delete <n> [ns]    Delete a dynamic store
+    stores get <n> <field>   Get a value from a store
+    stores set <n> <f> <v>   Set a value in a store
+    stores rm <n> <field>     Remove a field/entry from a store
+    stores dump <n>           Dump full store contents
   doctor                      Inspect Pi runtime and config resolution
   help                        Show this help
 `);
@@ -159,34 +158,30 @@ async function run(): Promise<void> {
     }
     case "sessions": {
       await ensureProjectScaffold(cwd);
-      const { names, active } = await sessionList(cwd);
-      for (const name of names) {
-        console.log(`${name === active ? "* " : "  "}${name}`);
-      }
-      return;
-    }
-    case "session": {
-      await ensureProjectScaffold(cwd);
       const name = args[0];
-      if (!name) throw new Error("session requires a name.");
-      await sessionSwitch(cwd, name);
-      console.log(`Switched to session: ${name}`);
+      if (name) {
+        await sessionSwitch(cwd, name);
+        console.log(`Switched to session: ${name}`);
+      } else {
+        const { names, active } = await sessionList(cwd);
+        for (const n of names) {
+          console.log(`${n === active ? "* " : "  "}${n}`);
+        }
+      }
       return;
     }
     case "threads": {
       await ensureProjectScaffold(cwd);
-      const threads = await threadList(cwd);
-      for (const t of threads) {
-        console.log(`${t.id} ${t.status} ${t.title}`);
-      }
-      return;
-    }
-    case "thread": {
-      await ensureProjectScaffold(cwd);
       const id = args[0];
-      if (!id) throw new Error("thread requires an ID.");
-      await threadSwitch(cwd, id);
-      console.log(`Switched to thread: ${id}`);
+      if (id) {
+        await threadSwitch(cwd, id);
+        console.log(`Switched to thread: ${id}`);
+      } else {
+        const threads = await threadList(cwd);
+        for (const t of threads) {
+          console.log(`${t.id} ${t.status} ${t.title}`);
+        }
+      }
       return;
     }
     case "rollback": {
@@ -227,21 +222,20 @@ async function run(): Promise<void> {
     }
     case "stores": {
       await ensureProjectScaffold(cwd);
-      const specs = await storeList(cwd, args[0] ? { namespace: args[0] } : undefined);
-      if (specs.length === 0) { console.log("No dynamic stores."); return; }
-      for (const s of specs) {
-        console.log(`${s.namespace}/${s.name} (${s.kind}) ${s.description || ""}`);
+      const sub = args[0];
+      if (!sub || sub.startsWith("-")) {
+        const specs = await storeList(cwd, sub ? { namespace: sub } : undefined);
+        if (specs.length === 0) { console.log("No dynamic stores."); return; }
+        for (const s of specs) {
+          console.log(`${s.namespace ?? "default"}/${s.name} (${s.kind}) ${s.description || ""}`);
+        }
+        return;
       }
-      return;
-    }
-    case "store": {
-      await ensureProjectScaffold(cwd);
-      const [sub, name, ...rest] = args;
-      if (!sub) throw new Error("store requires a subcommand: create, delete, get, set, rm, dump");
+      const [_, name, ...rest] = args;
       switch (sub) {
         case "create": {
           const [kind, ns, ...descParts] = rest;
-          if (!name || !kind) throw new Error("store create <name> <kind> [namespace] [description]");
+          if (!name || !kind) throw new Error("stores create <name> <kind> [namespace] [description]");
           const spec = await storeCreate(cwd, name, kind as any, { namespace: ns || undefined, description: descParts.join(" ") || undefined });
           console.log(`Created ${spec.namespace}/${spec.name} (${spec.kind})`);
           return;
@@ -253,19 +247,19 @@ async function run(): Promise<void> {
         }
         case "get": {
           const [field, ns] = rest;
-          if (!field) throw new Error("store get <name> <field> [namespace]");
+          if (!field) throw new Error("stores get <name> <field> [namespace]");
           console.log(await storeGet(cwd, name, field, ns || undefined));
           return;
         }
         case "set": {
           const [field, value, ns] = rest;
-          if (!field || value === undefined) throw new Error("store set <name> <field> <value> [namespace]");
+          if (!field || value === undefined) throw new Error("stores set <name> <field> <value> [namespace]");
           console.log(await storeSet(cwd, name, field, value, ns || undefined));
           return;
         }
         case "rm": {
           const [field, ns] = rest;
-          if (!field) throw new Error("store rm <name> <field> [namespace]");
+          if (!field) throw new Error("stores rm <name> <field> [namespace]");
           console.log(await storeRemove(cwd, name, field, ns || undefined));
           return;
         }
