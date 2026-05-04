@@ -8,17 +8,29 @@ This guide walks through the practical aspects of using Chrysalis Forge—from i
 
 ### Installation
 
-Chrysalis Forge requires Racket version 9.0 or later. If you don't have Racket installed, grab it from [racket-lang.org](https://racket-lang.org/). You'll also want git for cloning the repository, and curl comes in handy as a fallback for web search when the Exa API isn't available.
+Chrysalis Forge is a TypeScript project that runs on Node.js 20.19 or later. You'll also want git, and curl comes in handy as a fallback for web search when the Exa API isn't available.
 
-Clone and install with:
+The fastest path is the one-line installer:
 
 ```bash
-git clone https://github.com/Diogenesoftoronto/chrysalis-forge.git
-cd chrysalis-forge
-raco pkg install --auto
+curl -fsSL https://raw.githubusercontent.com/diogenesoftoronto/chrysalis-forge/main/scripts/install.sh | bash
 ```
 
-This registers two commands: `chrysalis` (the full agent) and `chrysalis-client` (a lightweight client for connecting to remote agent services). The installation process pulls in all Racket dependencies automatically.
+Or install from npm:
+
+```bash
+npm install -g chrysalis-forge
+```
+
+From source:
+
+```bash
+git clone https://github.com/diogenesoftoronto/chrysalis-forge.git
+cd chrysalis-forge
+npm install && npm run build
+```
+
+This registers the `chrysalis` command.
 
 ### Configuration
 
@@ -77,8 +89,10 @@ Use `/config list` to see all current settings, and `/models` to discover availa
 The most common way to use Chrysalis Forge is interactive mode, which drops you into a REPL where you can have a conversation with the agent:
 
 ```bash
-chrysalis -i
+chrysalis shell
 ```
+
+![Interactive demo](../.vhs/interactive-demo.mp4)
 
 Once inside, you can type natural language requests. The agent reads your input, reasons about it, calls tools as needed, and responds. A typical session might look like:
 
@@ -87,7 +101,7 @@ Once inside, you can type natural language requests. The agent reads your input,
 [AGENT uses list_dir, displays results]
 
 [USER]> Show me how the optimizer works
-[AGENT uses read_file on src/core/optimizer-gepa.rkt, explains the code]
+[AGENT uses read_file on ts/core/evolution.ts, explains the code]
 
 [USER]> I think it should log more information. Can you add debug output?
 [AGENT uses patch_file to add logging, shows diff, asks for confirmation]
@@ -96,6 +110,8 @@ Once inside, you can type natural language requests. The agent reads your input,
 The agent's tool usage is transparent. You see which tools it invokes and what results come back. This transparency is intentional—you should never wonder what the agent did on your behalf.
 
 Several commands are available within the REPL (all start with `/`):
+
+![Help command](../.vhs/help.mp4)
 
 - `/help` - Show available commands
 - `/exit`, `/quit` - Exit the session
@@ -113,7 +129,6 @@ Several commands are available within the REPL (all start with `/`):
 - `/session list` - List all sessions
 - `/session new <name>` - Create a new session
 - `/session switch <name>` - Switch to a different session
-- `/raco <args>` - Run raco commands
 - `/init` - Initialize project and generate agents.md
 
 ### Single-Task Mode
@@ -124,12 +139,18 @@ For scripting or quick tasks, pass the prompt directly on the command line:
 chrysalis "Explain what this codebase does"
 ```
 
+![CLI task](../.vhs/cli-task.mp4)
+
 The agent runs, produces output, and exits. This is useful for automation or when you just need a quick answer. Combine with flags to control behavior:
 
 ```bash
 # Allow file modifications (security level 2)
-chrysalis --perms 2 "Fix the type error in parser.rkt"
+chrysalis --perms 2 "Fix the type error in ts/core/config.ts"
+```
 
+![Security levels](../.vhs/security-levels.mp4)
+
+```bash
 # Use a specific model with speed priority
 chrysalis --model gpt-5.2 --priority fast "Summarize the README"
 
@@ -146,12 +167,6 @@ chrysalis --serve --serve-port 8080
 ```
 
 This exposes an OpenAI-compatible API at `/v1/chat/completions`, meaning existing tools that speak the OpenAI protocol can connect directly. The service also provides endpoints for user management (`/auth/register`, `/auth/login`), higher-level **thread** and **project** management (`/v1/threads`, `/v1/projects`), and lower-level session tracking (`/v1/sessions`) which is now mostly an internal implementation detail.
-
-Connect with the included client:
-
-```bash
-chrysalis-client --url http://localhost:8080 --api-key your-jwt-token
-```
 
 Client applications that want durable conversation state should model it in terms of **threads** (and optionally **projects**) rather than raw sessions; the server automatically rotates and archives underlying sessions while keeping thread IDs stable.
 
@@ -191,7 +206,7 @@ Security levels add another dimension of control, governing *how* dangerous oper
 
 **Level 0** is pure sandbox—no execution of anything that could affect the system.
 
-**Level 1** allows safe operations: reading files, running sandboxed Racket expressions, basic network reads.
+**Level 1** allows safe operations: reading files and basic network reads.
 
 **Level 2** permits file writes, but requires confirmation. Every write operation prompts you before executing.
 
@@ -218,7 +233,9 @@ The judge receives the proposed operation and responds with [SAFE] or [UNSAFE]. 
 
 ## The Tool System
 
-Chrysalis Forge provides 25 built-in tools organized into categories. Understanding these tools helps you understand what the agent can do.
+Chrysalis Forge provides 63 built-in tools across 14 categories, plus a runtime tool evolution system. Understanding these tools helps you understand what the agent can do.
+
+![Features overview](../.vhs/features-overview.mp4)
 
 ### File Operations
 
@@ -227,13 +244,13 @@ The core file tools are `read_file`, `write_file`, `patch_file`, `list_dir`, and
 What's notable is `patch_file`—rather than rewriting entire files, the agent can make surgical edits to specific line ranges. This produces cleaner diffs and reduces the risk of unintended changes. When the agent decides to patch, it shows you the diff before applying:
 
 ```
-[AGENT proposes patch to src/parser.rkt, lines 45-52]
---- a/src/parser.rkt
-+++ b/src/parser.rkt
+[AGENT proposes patch to ts/core/config.ts, lines 45-52]
+--- a/ts/core/config.ts
++++ b/ts/core/config.ts
 @@ -45,8 +45,10 @@
-   (define tokens (tokenize input))
-+  (log-debug "Tokenized: ~a tokens" (length tokens))
-   (parse-tokens tokens))
+   const tokens = tokenize(input);
++  debug(`Tokenized: ${tokens.length} tokens`);
+   return parseTokens(tokens);
 
 Apply this change? [y/N]
 ```
@@ -271,15 +288,37 @@ This profile system serves two purposes: it focuses each sub-agent on its task (
 
 ### Self-Evolution
 
-The evolution tools (`evolve_system`, `log_feedback`, `suggest_profile`, `profile_stats`) let you interact with the learning system.
+The evolution tools (`evolve_system`, `evolve_meta`, `evolve_harness`, `log_feedback`, `suggest_profile`, `profile_stats`, `evolution_stats`, `archive_list`) let you interact with the learning system.
+
+![Evolution cycle](../.vhs/evo-cycle.mp4)
 
 `evolve_system` triggers GEPA optimization. You provide feedback ("The agent should be more concise" or "It keeps missing edge cases in tests"), and the system evolves the prompt to address that feedback.
 
+### Tool Evolution
+
+The tool evolution system (`evolve_tool`, `list_tools`, `tool_variants`, `select_tool_variant`, `enable_tool`, `disable_tool`, `tool_stats`, `tool_evolution_stats`) allows tools themselves to be rewritten and evolved at runtime — a self-referential improvement loop.
+
+![Tool evolution](../.vhs/tool-evolution.mp4)
+
+Use the `/evolve-tool` slash command or the `evolve_tool` LLM tool to mutate a tool's description or parameters. Variants are gated by novelty scoring (n-gram distance), persisted to `.chrysalis/state/tool-evolution.json`, and can be selected or archived without restart.
+
+### LLM-as-Judge Evaluation
+
+The judge tools (`use_llm_judge`, `judge_quality`) evaluate code or text using LLM-backed quality scoring with heuristic fallback. When no provider is configured, a heuristic scores based on documentation, type annotations, error handling, and test presence.
+
+![Judge evaluation](../.vhs/judge-eval.mp4)
+
+### Test Generation
+
+The test tools (`generate_tests`, `generate_test_cases`) generate unit tests for source files using LLM-backed test generation. They auto-detect frameworks (vitest/jest/pytest/golang) from file extensions and content, and fall back to pattern-based heuristic generation.
+
+![Test generation](../.vhs/test-generation.mp4)
+
+### Priority Tools
+
+The priority tools (`set_priority`, `get_priority`, `suggest_priority`) allow the agent to change its own priority mid-task. `set_priority` supports natural language phrases — "make it fast" maps to the `fast` profile, "keep costs down" maps to `cheap`.
+
 `log_feedback` records task outcomes for learning. When a task succeeds or fails, logging it helps the system learn which approaches work.
-
-`suggest_profile` queries the accumulated learning data to recommend which sub-agent profile suits a given task type.
-
-`profile_stats` shows raw performance data—success rates, average durations, costs per profile.
 
 ---
 
@@ -296,6 +335,8 @@ chrysalis --priority fast "Quick status check"
 chrysalis --priority cheap "Batch analysis"
 chrysalis --priority accurate "Critical code review"
 ```
+
+![Priority selection](../.vhs/priority-selection.mp4)
 
 Each keyword maps to a target in phenotype space. "Fast" prioritizes low latency, accepting potentially lower accuracy. "Cheap" minimizes token cost. "Accurate" (or "best") prioritizes correctness regardless of time or cost.
 
@@ -420,8 +461,8 @@ For complex tasks, explicitly request parallel execution:
 
 ```
 Spawn three sub-agents:
-1. A researcher to analyze src/parser.rkt
-2. A researcher to analyze src/lexer.rkt  
+1. A researcher to analyze ts/core/decomp-planner.ts
+2. A researcher to analyze ts/core/evolution.ts
 3. An editor to prepare a refactoring plan
 
 Wait for all to complete, then synthesize their findings.

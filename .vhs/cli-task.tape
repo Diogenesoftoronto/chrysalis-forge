@@ -1,3 +1,4 @@
+Output .vhs/cli-task.mp4
 Output .vhs/cli-task.gif
 Set FontSize 14
 Set Width 1200

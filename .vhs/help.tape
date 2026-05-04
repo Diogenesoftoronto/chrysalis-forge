@@ -1,3 +1,4 @@
+Output .vhs/help.mp4
 Output .vhs/help.gif
 Set FontSize 14
 Set Width 1200

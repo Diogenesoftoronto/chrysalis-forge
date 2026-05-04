@@ -1,3 +1,4 @@
+Output .vhs/interactive-demo.mp4
 Output .vhs/interactive-demo.gif
 Set FontSize 14
 Set Width 1200

@@ -1,3 +1,4 @@
+Output .vhs/security-levels.mp4
 Output .vhs/security-levels.gif
 Set FontSize 14
 Set Width 1200

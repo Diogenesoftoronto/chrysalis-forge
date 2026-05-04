@@ -1,3 +1,4 @@
+Output .vhs/priority-selection.mp4
 Output .vhs/priority-selection.gif
 Set FontSize 14
 Set Width 1200

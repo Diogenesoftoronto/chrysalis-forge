@@ -1,637 +1,509 @@
 # Chrysalis Forge Architecture
 
-The architecture of Chrysalis Forge reflects a fundamental conviction: that intelligent systems should be built from composable, evolvable components rather than monolithic black boxes. Every layer of the system is designed with three properties in mind—observability (you can see what's happening), evolvability (the system improves from experience), and safety (mistakes are bounded and recoverable).
+Chrysalis Forge is a TypeScript agent framework that treats prompts, strategies, and decomposition patterns as evolvable components. The system self-improves through a GEPA-style evolutionary loop backed by MAP-Elites archiving, bandit-based model selection, and autonomous evolution triggers. Every component — from the system prompt to the harness strategy's 12 evolvable fields — is subject to mutation, selection, and archival.
 
-This document walks through the architecture from the ground up, starting with the data layer and building toward the orchestration systems that tie everything together. Along the way, we'll examine actual code from the implementation, explaining not just what it does but why it's structured the way it is.
+The framework migrated from Racket to TypeScript, shedding the GUI layer and visual modules entirely. Persistence is JSON-backed across all stores. Sub-agent orchestration routes through the Pi runtime rather than Racket threads. The architecture prioritizes composable, terminal-first components that can be independently evolved, tested, and replaced.
 
 ---
 
 ## The Layered Design
 
-Chrysalis Forge is organized into four distinct layers, each with a clear responsibility:
-
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              main.rkt                                   │
-│                   Entry Point, CLI Parsing & Modes                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│      runtime.rkt      │     commands.rkt     │       repl.rkt          │
-│   Shared parameters   │   Slash commands &   │   REPL loop &           │
-│     & helpers         │   session helpers    │   terminal handling     │
-├──────────────────────────────┬──────────────────────────────────────────┤
-│         src/gui/             │              src/utils/                  │
-│   GUI: themes, widgets,      │   CLI visuals: colors, spinners,        │
-│   chat, notifications        │   message boxes, animations             │
-├──────────────────────────────┴──────────────────────────────────────────┤
-│                            src/core/                                    │
-│         Orchestration: decomposition, optimization, sub-agents          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                            src/llm/                                     │
-│          DSPy abstractions, model selection, pricing, client            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                           src/stores/                                   │
-│           Persistence: context, traces, evals, cache, vectors           │
-├─────────────────────────────────────────────────────────────────────────┤
-│                           src/tools/                                    │
-│              28+ built-in tools (file, git, jj, web, etc.)              │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  CLI  (ts/cli/main.ts)                              │
+│  Command dispatch: shell, plan, evolve, decomp, …    │
+├─────────────────────────────────────────────────────┤
+│  Pi Extension / Commands  (ts/pi/)                   │
+│  /plan /profile /evolve /meta-evolve /harness …      │
+│  Session hooks: autonomous evolution on session_start │
+├─────────────────────────────────────────────────────┤
+│  Core / Orchestration  (ts/core/)                   │
+│  Evolution │ Decomposition │ Priority │ Project      │
+│  Config │ Ax Integration │ Paths │ Util             │
+├─────────────────────────────────────────────────────┤
+│  Stores  (ts/core/stores/)                           │
+│  Context │ Eval │ Trace │ Cache │ Vector │ RDF      │
+│  Decomp Archive │ Rollback │ Thread │ Session Stats │
+│  Dynamic Store Registry (kv/log/set/counter)         │
+├─────────────────────────────────────────────────────┤
+│  Tools  (ts/core/tools/)                             │
+│  Evolution │ Judge │ Test │ Priority │ Evolver │ Git   │
+│  Jujutsu │ Web │ Sub-Agent │ Store │ Cache │ RDF    │
+│  Rollback │ Decomp                        │
+│  Tool Registry (runtime enable/disable/evolve)       │
+│  Tool Evolution (novelty-gated variant management)   │
+└─────────────────────────────────────────────────────┘
 ```
 
-This layering isn't arbitrary. Dependencies flow downward: the core layer depends on LLM and stores, but not vice versa. Tools depend on nothing except external systems. This constraint makes the system easier to reason about and test—you can verify the LLM layer without involving orchestration, or test tools in isolation.
+Each layer depends only on the layer below it. The CLI and Pi extension both exercise the Core orchestration layer. The Core depends on Stores for persistence and Tools for structured I/O. Stores are pure JSON-backed data modules with no cross-dependencies.
 
 ---
 
-## The Stores Layer: Memory That Persists and Learns
+## The Stores Layer
 
-At the foundation sits the stores layer, responsible for all persistent state. Unlike typical applications where persistence is an afterthought, Chrysalis treats storage as a first-class concern because learning requires memory.
+All persistence lives under `ts/core/stores/`. Every store reads and writes JSON files under the `.chrysalis/state/` directory tree (configured via `ts/core/paths.ts`). There is no SQLite — even the RDF store is JSON-backed.
 
 ### Context Store
 
-The context store (`src/stores/context-store.rkt`) manages agent sessions. A `Ctx` structure captures everything about an agent's current state:
+**File:** `ts/core/stores/context-store.ts`
 
-```racket
-(struct Ctx (system memory tool-hints mode priority history compacted-summary) 
-  #:transparent)
+Manages named sessions with their system prompts, memory, tool hints, mode, and priority. Sessions are the primary isolation boundary for conversation state.
+
+```typescript
+interface SessionDB {
+  active: string;
+  items: Record<string, SessionContext>;
+  metadata: Record<string, SessionMetadata>;
+}
+
+interface SessionContext {
+  system: string;
+  memory: string;
+  toolHints: string;
+  mode: "ask" | "code";
+  priority: ChrysalisProfile | string;
+  history: unknown[];
+  compactedSummary: string;
+}
 ```
 
-The **system** field holds the system prompt—the instructions that define the agent's behavior. This is the primary target of GEPA evolution. When the system evolves a better prompt, it gets stored here.
-
-The **memory** field serves as a working scratchpad. Unlike history, which is append-only, memory can be freely overwritten. It's where the agent stores intermediate thoughts, extracted facts, or task-specific context that shouldn't pollute the main conversation.
-
-The **tool-hints** field contains guidance about tool usage. Rather than relying on the LLM to rediscover how to use tools effectively, explicit hints encode best practices: "When searching code, use narrow path filters to avoid timeout."
-
-The **mode** field gates tool access. Chrysalis defines four operational modes—`ask` (no filesystem access), `architect` (read-only analysis), `code` (full capabilities), and `semantic` (RDF knowledge graph operations). The mode determines which tools are available, implementing the principle of least privilege.
-
-The **priority** field specifies the performance profile. This can be a symbol (`'fast`, `'cheap`, `'best`) or a natural language string ("I need accuracy but I'm on a budget"). The priority propagates through the entire execution stack, influencing model selection, decomposition limits, and module choice.
-
-Contexts are versioned with timestamps when evolved, enabling historical analysis. You can ask: "How has this agent's system prompt changed over the past week? What feedback drove those changes?"
+Operations: `sessionCreate`, `sessionSwitch`, `sessionDelete`, `sessionList`, `sessionGetActive`. Writes are atomic via `rename()` over a `.tmp` file.
 
 ### Eval Store
 
-The eval store (`src/stores/eval-store.rkt`) tracks task outcomes by profile and versioned candidate. Every time a sub-agent completes a task, the result is logged:
+**File:** `ts/core/stores/eval-store.ts`
 
-```racket
-(log-eval! #:task-id id 
-           #:success? bool 
-           #:profile name 
-           #:candidate-id cid 
-           #:eval-stage stage)
+Appends task outcome records to a JSONL file and maintains aggregated profile statistics. Each evaluation records success/failure, profile, task type, tools used, and duration.
+
+```typescript
+interface EvalRecord {
+  ts: number;
+  taskId: string;
+  success: boolean;
+  profile: string;
+  taskType: string;
+  toolsUsed: string[];
+  durationMs: number;
+  feedback: string;
+}
 ```
 
-This data feeds the learning loop at two levels:
-1. **Profile Optimization**: The `suggest-profile` function examines historical performance to recommend which profile suits a given task type.
-2. **Evolutionary Gating**: The archival evolutionary loop uses eval data to gate candidates. Only variants that pass the "smoke" stage are permitted to proceed to full benchmarking.
-
-Eval records now capture:
-- **Candidate ID**: Lineage-aware identifier from the Agent Archive.
-- **Evaluation Stage**: Distinguishes between cheap smoke tests and expensive full benchmarks.
-- **Telemetry**: Duration, cost, success, and tool usage frequency.
-
-Over time, the system learns that "researcher" profiles excel at code exploration while "editor" profiles are better for modifications. This learning is organic—it emerges from usage rather than explicit training.
+Profile statistics track per-profile success rates, task type distributions, and tool frequency histograms. The `suggestProfile()` function uses these statistics to recommend the best-performing profile for a given task type.
 
 ### Trace Store
 
-The trace store (`src/stores/trace-store.rkt`) logs every operation to `~/.chrysalis/traces.jsonl`. Each entry captures:
+**File:** `ts/core/stores/trace-store.ts`
 
-- Timestamp
-- Operation type (tool call, LLM invocation, decomposition step)
-- Inputs and outputs
-- Duration and cost
-- Success or failure
+Append-only JSONL audit trail. Each trace captures the task, final output, token usage, cost, and tool results.
 
-This audit trail serves multiple purposes. Debugging becomes tractable—when something goes wrong, you can reconstruct exactly what happened. Performance analysis reveals bottlenecks. And the traces themselves become training data for future optimization.
+```typescript
+interface TraceRecord {
+  ts: number;
+  task: string;
+  final: string;
+  tokens: Record<string, number>;
+  cost: number;
+  toolResults: unknown[];
+}
+```
 
 ### Decomposition Archive
 
-The decomposition archive (`src/stores/decomp-archive.rkt`) stores successful decomposition patterns. When a complex task is decomposed effectively—completing under budget with high success rate—the decomposition strategy is archived.
+**File:** `ts/core/stores/decomp-archive.ts`
 
-Future similar tasks can retrieve proven strategies via KNN search, bootstrapping from past success rather than reasoning from scratch. This is MAP-Elites applied to decomposition: maintain diverse high-performing patterns, select based on task phenotype.
+Stores per-task-type decomposition patterns in a MAP-Elites–inspired structure. Each archive maintains an `archive` map keyed by phenotype bin, a `pointCloud` of all observed pattern/phenotype pairs, and a `defaultId` pointing to the best overall pattern.
 
-### Agent Archive
+```typescript
+interface DecompositionArchive {
+  taskType: string;
+  archive: Record<string, { score: number; pattern: DecompositionPattern }>;
+  pointCloud: Array<{ phenotype: DecompPhenotype; pattern: DecompositionPattern }>;
+  defaultId: string | null;
+}
+```
 
-The agent archive (`src/stores/agent-archive.rkt`) persists versioned variants of agent components, including system prompts and workflows. Unlike the decomposition archive which focuses on task breakdown patterns, the agent archive tracks the evolution of the agent's core logic.
+`recordPattern()` replaces the bin entry when a higher-scoring pattern arrives and prepends to the point cloud. `pruneArchive()` caps the cloud size at 1000 entries while preserving binned patterns.
 
-Each `AgentVariant` maintains:
-- **Lineage**: Reference to the parent variant, enabling tree-based search and rollback.
-- **Evaluation Summary**: Aggregated performance metrics (success rate, cost, latency).
-- **Task Family**: Categorization for targeted parent selection (e.g., "coding", "research").
-- **Viability Gate**: Explicit flagging of variants that pass performance thresholds.
+### Rollback Store
 
-This archival approach transforms optimization from simple linear replacement to a complex evolutionary search, preserving high-performing "branches" even when global regressions occur.
+**File:** `ts/core/stores/rollback-store.ts`
+
+File-level undo system. `fileBackup()` copies a file to `.chrysalis/state/rollbacks/` with a timestamped backup name and records the entry in an index. `fileRollback()` restores a file to a previous version by copying the backup back. The index tracks up to 10 rollback entries per file (configurable).
+
+```typescript
+interface RollbackEntry {
+  timestamp: number;
+  backupPath: string;
+}
+```
+
+### Thread Store
+
+**File:** `ts/core/stores/thread-store.ts`
+
+Durable conversation state with relations and context trees. Threads can be linked to sessions, spawned as children, or continued from previous threads.
+
+```typescript
+interface ThreadsDB {
+  threads: Record<string, ThreadData>;
+  relations: ThreadRelation[];
+  contexts: Record<string, ContextNode>;
+  activeThread: string | null;
+}
+```
+
+Relations model `continues_from` and `child_of` edges. Context nodes form a tree (via `parentId`) within each thread, enabling hierarchical note-taking. Writes are atomic.
+
+### Cache Store
+
+**File:** `ts/core/stores/cache-store.ts`
+
+TTL-bounded key-value cache with tag-based invalidation. Default TTL is 86400s (1 day), max 604800s (1 week).
+
+```typescript
+interface CacheEntry {
+  value: string;
+  createdAt: number;
+  ttl: number;
+  tags: string[];
+}
+```
+
+`cacheInvalidateByTag()` removes all entries carrying a given tag. `cacheCleanup()` evicts expired entries. Stats report total, valid, expired, and per-tag counts.
+
+### Vector Store
+
+**File:** `ts/core/stores/vector-store.ts`
+
+Cosine similarity search over stored embeddings. Each entry pairs text with a numeric vector.
+
+```typescript
+interface VectorEntry {
+  text: string;
+  vec: number[];
+}
+```
+
+`vectorSearch()` computes cosine similarity between a query vector and all stored vectors, returning the top-K results. Suitable for small-scale semantic retrieval without an external vector database.
+
+### RDF Store
+
+**File:** `ts/core/stores/rdf-store.ts`
+
+JSON-backed triple/quad store with pattern-matching queries. Each triple has subject, predicate, object, graph, and timestamp fields.
+
+```typescript
+interface Triple {
+  subject: string;
+  predicate: string;
+  object: string;
+  graph: string;
+  timestamp: number;
+}
+```
+
+`rdfLoad()` parses N-triples format files into a named graph (replacing existing triples for that graph). `rdfQuery()` supports pattern matching with `?` wildcards (e.g., `?s predicate object ?g`). `rdfInsert()` adds a single triple. All data is stored in a single JSON file.
+
+### Session Stats
+
+**File:** `ts/core/stores/session-stats.ts`
+
+Tracks per-session metrics: turns, token counts, costs, files read/written, and tool usage frequency.
+
+```typescript
+interface SessionStats {
+  startTime: number;
+  turns: number;
+  tokensIn: number;
+  tokensOut: number;
+  totalCost: number;
+  filesWritten: string[];
+  filesRead: string[];
+  toolsUsed: Record<string, number>;
+}
+```
+
+Incremental updates via `addTurn()`, `addTokens()`, `addCost()`, `recordToolUse()`, `recordFileOp()`.
+
+### Dynamic Store Registry
+
+**File:** `ts/core/stores/store-registry.ts`
+
+User-created stores at runtime. The registry tracks specs and delegates to per-kind data files.
+
+```typescript
+type StoreKind = "kv" | "log" | "set" | "counter";
+
+interface StoreSpec {
+  name: string;
+  namespace: string;
+  kind: StoreKind;
+  description: string;
+  createdAt: number;
+  updatedAt: number;
+}
+```
+
+- **kv**: key-value map (`Record<string, unknown>`)
+- **log**: append-only array of timestamped entries
+- **set**: array with deduplication on insert
+- **counter**: single `{ value: number }` incremented by `storeSet`
+
+Stores are namespaced (`namespace:name`). Each store's data lives in a separate JSON file under `.chrysalis/state/stores/`.
 
 ---
 
-## The LLM Layer: Typed Interactions with Language Models
+## The Core Layer
 
-Above the stores sits the LLM layer, which provides typed abstractions for language model interaction. The key insight, borrowed from Stanford's DSPy, is that LLM calls should be treated as function calls with explicit signatures.
+### Evolution Engine
 
-### Signatures and Modules
+**File:** `ts/core/evolution.ts`
 
-A `Signature` declares input and output fields with type predicates:
+The evolutionary loop implements GEPA (Generate-Evaluate-Preserve-Adapt) with MAP-Elites archiving. Four evolution families are tracked: `"prompt"`, `"meta"`, `"workflow"`, and `"harness"`.
 
-```racket
-(struct SigField (name pred) #:transparent)
-(struct Signature (name ins outs) #:transparent)
+**System Prompt Evolution** (`evolveSystemPrompt`): The LLM (or heuristic fallback) rewrites the system prompt given feedback. Novelty is checked against the `noveltyArchive` using trigram Jaccard distance. If the first rewrite is insufficiently novel (threshold 0.3), a second rewrite is forced with stronger instructions. Accepted rewrites are archived and the novelty archive is updated (capped at 100 entries).
 
-;; Example: An optimizer that takes instructions and failures, produces new instructions
-(define OptSig 
-  (signature Opt 
-    (in [inst string?] [fails string?]) 
-    (out [thought string?] [new_inst string?])))
+**Meta Prompt Evolution** (`evolveMetaPrompt`): Same process for the optimizer/meta-prompt that governs how system prompts are themselves rewritten.
+
+**Harness Strategy Evolution** (`evolveHarnessStrategy`): Signal detection on feedback text mutates the 12 evolvable fields of the harness:
+
+```typescript
+interface HarnessStrategy {
+  contextBudget: number;        // 0–1, fraction of context window
+  compactionThreshold: number;  // 0–1, trigger for context compaction
+  strategyType: "predict" | "cot";
+  temperature: number;         // 0–2
+  topP: number;                 // 0–1
+  toolHintWeight: number;      // 0–1, bias toward tool usage
+  preferTools: boolean;        // tool-first or reasoning-first
+  demoCount: number;           // 1–8 few-shot examples
+  demoSelection: "random" | "similar" | "diverse";
+  preferCheapDecomp: boolean;  // favor low-cost decomposition
+  executionPriority: ChrysalisProfile;
+  mutationRate: number;        // 0.05–1, controls evolutionary exploration
+}
 ```
 
-The predicates (`string?`, `number?`, etc.) enable validation. If a response doesn't parse correctly or violates type expectations, that's detected immediately rather than propagating as subtle corruption.
+Nine signal detectors parse feedback for compact, detailed, urgent, costSensitive, toolHeavy, precisionHeavy, exploratory, migrationHeavy, and reviewHeavy signals. Each signal triggers targeted field mutations with clamped bounds.
 
-A `Module` wraps a signature with execution strategy:
+**MAP-Elites Archive** (`ArchiveEntry`): Every evolved variant is binned by phenotype. Phenotypes are normalized and binned by median thresholds: `cheap|premium : fast|slow : compact|verbose`. `selectEliteEntry()` retrieves the nearest archived variant to a target phenotype.
 
-```racket
-(struct Module (id sig strategy instructions demos params) #:transparent)
-```
+**Bandit Model Selection** (`BanditState`): A Thompson sampling ensemble selects which LLM provider to use for each evolution or planning call. `chooseBanditArm()` samples from Beta(α, β) for each arm and selects the highest sample. `updateBandit()` adjusts α/β based on task success/failure.
 
-The **strategy** is either `'predict` (direct completion) or `'cot` (chain-of-thought reasoning). Chain-of-thought modules are instructed to reason step-by-step before producing output, which often improves accuracy on complex tasks at the cost of additional tokens.
+**Autonomous Evolution** (`runAutonomousEvolution`): Triggered automatically on `session_start`, `task_plan`, and `evaluation` events. An LLM call (with heuristic fallback) decides whether to evolve the system prompt, meta prompt, and/or harness. Cooldowns prevent over-evolution: 6 hours for session_start triggers, 1 hour for others. The `force` flag bypasses cooldowns.
 
-The **instructions** field contains the core prompt text. This is what GEPA evolves.
+### Decomposition System
 
-The **demos** field holds few-shot examples. Each demo is a hash mapping field names to values, showing the model what good input-output pairs look like.
+Three modules collaborate on task decomposition:
 
-The **params** hash contains model parameters—temperature, max tokens, and similar settings.
+**Planner** (`ts/core/decomp-planner.ts`): Classifies tasks into types via keyword matching. Produces subtask definitions with dependency graphs and tool profile hints. Two decomposition paths: `decomposeTaskLLM()` uses `@ax-llm/ax` (timeout 20s), and `heuristicDecomposition()` provides rule-based fallback.
 
-### Module Archives
+**Selector** (`ts/core/decomp-selector.ts`): Retrieves the best archived decomposition pattern for a given priority by mapping profiles to target phenotypes. `selectPatternForPhenotype()` finds the archived pattern whose computed phenotype is nearest (Euclidean distance) to the target.
 
-A `ModuleArchive` collects multiple module variants indexed by phenotype:
+**Voter** (`ts/core/decomp-voter.ts`): First-to-K voting for reliability on high-stakes tasks. Five stakes presets from NONE (0 voters) to CRITICAL (9 voters, K=7). When decorrelation is enabled, each voter receives a different style prompt. Votes are tallied with fuzzy equivalence (Jaccard ≥ 0.6 on words).
 
-```racket
-(struct ModuleArchive (id sig archive point-cloud default-id) #:transparent)
-```
+### Priority System
 
-The **archive** is a hash from bin keys to (score, module) pairs. Bin keys are lists like `'(cheap fast compact)` describing which phenotype bins the module occupies. This discrete structure enables fast lookup for keyword priorities.
+**File:** `ts/core/priority.ts`
 
-The **point-cloud** is a list of (phenotype, module) pairs for geometric search. When the user specifies a natural language priority, KNN search finds the nearest module in continuous phenotype space.
+Natural language to profile mapping. `interpretProfilePhrase()` parses user phrases like "I need this fast" or "keep costs down" into one of four profiles: `"fast"`, `"cheap"`, `"best"`, or `"verbose"`.
 
-This dual representation—discrete bins and continuous cloud—bridges two usage patterns. Simple cases ("give me the cheap one") hit the fast path. Complex cases ("balance cost and accuracy, slightly favor speed") use geometric interpolation.
+### Supporting Core Modules
 
-### The Compilation Process
+**Config** (`ts/core/config.ts`): Loads `chrysalis.config.json` with sanitization. Defines the runtime preference, default provider/model/thinking, tool list, default profile, and artifact root.
 
-The `compile!` function in `dspy-compile.rkt` implements the MAP-Elites optimization loop:
+**Ax Integration** (`ts/core/ax.ts`): Wraps `@ax-llm/ax` for LLM-backed task planning. Falls back to heuristic plans when no provider is configured.
 
-```racket
-(define (compile! m ctx trainset send! 
-                 #:k-demos [k 3] 
-                 #:n-inst [n 5] 
-                 #:iters [iters 3]
-                 #:use-meta-optimizer? [use-meta? #t])
-  ;; 1. Bootstrap few-shot examples
-  (define demos (bootstrap-fewshot trainset #:k k))
-  (define m0 (module-set-demos m demos))
-  
-  ;; 2. Initialize archive and point cloud
-  (define archive (make-hash))
-  (define point-cloud '())
-  
-  ;; 3. Seed with instruction mutations
-  (define seeds (default-instruction-mutations (Module-instructions m0)))
-  ;; ... evaluate seeds, establish relative thresholds ...
-  
-  ;; 4. Evolutionary loop
-  (for ([i (range iters)] #:when use-meta?)
-    ;; Select random elite as parent
-    (define parent-key (list-ref elite-keys (random (length elite-keys))))
-    (define parent-mod (cdr (hash-ref archive parent-key)))
-    
-    ;; Generate children via meta-optimization
-    (for ([j (range n)])
-      (let-values ([(child-mod thought) (meta-optimize-module parent-mod ctx trainset send!)])
-        (let-values ([(score p-key res-list) (evaluate-module child-mod)])
-          (update-archive! child-mod score p-key res-list)))))
-  
-  ;; 5. Return ModuleArchive
-  (ModuleArchive (Module-id m0) (Module-sig m0) archive point-cloud best-key))
-```
+**Paths** (`ts/core/paths.ts`): Central path resolver for the `.chrysalis/` directory tree. `ensureChrysalisDirs()` creates the full directory structure on first access.
 
-The process begins by bootstrapping few-shot examples from the training set. These examples anchor the module's behavior before optimization begins.
+**Project** (`ts/core/project.ts`): Project scaffold, profile state persistence, task plan artifact writing, and artifact listing.
 
-Next, instruction mutations create initial diversity: the base instructions plus variations ("Be concise", "Think step-by-step", "Output STRICT JSON"). These seeds are evaluated and archived.
-
-The evolutionary loop then iterates. Each generation selects a random elite as parent, applies meta-optimization to generate children, evaluates them, and updates the archive. The meta-optimizer uses natural language reflection—examining the parent's failures and proposing improvements.
-
-The result is a `ModuleArchive` containing diverse, high-performing module variants ready for priority-based selection.
-
-### Phenotype Extraction and Binning
-
-A key detail is how phenotypes are extracted from execution results:
-
-```racket
-(define (extract-phenotype rr score)
-  (define meta (RunResult-meta rr))
-  (define model (hash-ref meta 'model "unknown"))
-  (define p-tokens (hash-ref meta 'prompt_tokens 0))
-  (define c-tokens (hash-ref meta 'completion_tokens 0))
-  (define cost (calculate-cost model p-tokens c-tokens))
-  (define lat (hash-ref meta 'elapsed_ms 0))
-  (define total-tokens (+ p-tokens c-tokens))
-  (Phenotype score lat cost total-tokens))
-```
-
-The phenotype captures not just the score (accuracy) but the resource consumption—latency, cost, total tokens. These dimensions are what enable trade-off selection.
-
-Binning uses relative thresholds established from the seed population:
-
-```racket
-(define (get-phenotype-key rr [t-cost 0.0] [t-lat 0.0] [t-usage 0.0])
-  ;; ... extract metrics ...
-  (list (if (< cost t-cost) 'cheap 'premium)
-        (if (< lat t-lat) 'fast 'slow)
-        (if (< total-tokens t-usage) 'compact 'verbose)))
-```
-
-Thresholds are set to medians, so bins represent "below median" vs "above median" on each dimension. This relative binning adapts to the specific task and model—what counts as "cheap" depends on context.
+**Util** (`ts/core/util.ts`): `slugify()` (URL-safe filenames) and `dedupe()` (whitespace-trimmed unique filter).
 
 ---
 
-## The Core Layer: Orchestration and Intelligence
+## The Pi Runtime Layer
 
-The core layer contains the high-level orchestration systems: geometric decomposition, prompt evolution, and sub-agent management.
+### Pi Agent Extension
 
-### Geometric Decomposition
+**File:** `ts/pi/chrysalis-extension.ts`
 
-The decomposition system in `geometric-decomposition.rkt` implements MAKER-inspired task breakdown with self-regulation. The central data structures capture decomposition state:
+Registers 20 commands with the Pi agent runtime and hooks into `session_start` for autonomous evolution:
 
-```racket
-(struct DecompositionPhenotype 
-  (depth breadth accumulated-cost context-size success-rate) 
-  #:transparent)
+![Evolution cycle](../.vhs/evo-cycle.mp4)
 
-(struct DecompositionState 
-  (root-task task-type priority tree phenotype limits checkpoints steps-taken meta) 
-  #:transparent #:mutable)
-```
+| Command | Action |
+|---------|--------|
+| `/plan` | Write a task plan artifact via Ax |
+| `/profile` | Show or set the active profile |
+| `/evolve` | Force system prompt evolution |
+| `/meta-evolve` | Force meta/optimizer prompt evolution |
+| `/harness` | Force harness strategy mutation |
+| `/evolve-tool` | Evolve a tool's definition from feedback |
+| `/archive` | Browse archived evolution variants |
+| `/stats` | Show evolution and profile statistics |
+| `/outputs` | Browse generated artifacts |
+| `/sessions` | List sessions |
+| `/session` | Switch session |
+| `/threads` | List threads |
+| `/thread` | Switch thread |
+| `/rollback` | Rollback a file to a previous version |
+| `/cache-stats` | Show cache statistics |
+| `/rdf-load` | Load triples into an RDF graph |
+| `/rdf-query` | Query the RDF knowledge graph |
+| `/rdf-insert` | Insert a triple into the RDF store |
+| `/decomp` | Decompose a task into subtasks |
+| `/stores` | List dynamic stores |
+| `/store` | Manage dynamic stores (create/get/set/rm/dump) |
 
-The phenotype tracks five dimensions as decomposition proceeds:
+The `session_start` hook loads the evolution state, prints a summary, and fires `runAutonomousEvolution()` asynchronously.
 
-**Depth** measures how many levels of subtasks exist. Deeper decomposition provides finer granularity but increases overhead.
+### Pi Runtime
 
-**Breadth** measures maximum parallel fan-out. Wide decomposition enables parallelism but strains resources.
+**File:** `ts/runtime/pi.ts`
 
-**Accumulated-cost** tracks total expenditure across all LLM calls. Each decomposition step and subtask execution adds to this.
+Handles two Pi runtime modes:
 
-**Context-size** monitors peak context tokens. Large contexts slow execution and degrade quality.
+1. **Standalone**: Spawns the `pi` binary as a child process with `stdio: "inherit"`.
+2. **Bundled/Embedded**: Imports `@mariozechner/pi-coding-agent` directly and calls `main()` in-process.
 
-**Success-rate** tracks the fraction of subtasks that complete successfully. A falling success rate suggests the decomposition strategy is producing subtasks the model can't handle.
+Runtime preference: `"embedded-only"` | `"prefer-embedded"` | `"standalone-only"` | `"prefer-standalone"`.
 
-Limits are set based on priority:
+### Bundled Assets
 
-```racket
-(define (limits-for-priority priority budget context-limit)
-  (match priority
-    ['critical
-     (DecompositionLimits 10 20 (* budget 2.0) (* context-limit 1.5) 0.6)]
-    ['high
-     (DecompositionLimits 8 15 (* budget 1.5) context-limit 0.7)]
-    ['normal
-     (DecompositionLimits 6 10 budget (* context-limit 0.8) 0.75)]
-    ['low
-     (DecompositionLimits 4 6 (* budget 0.5) (* context-limit 0.5) 0.8)]
-    [_ (DecompositionLimits 6 10 budget context-limit 0.75)]))
-```
+**File:** `ts/runtime/bundled-assets.generated.ts`
 
-Critical tasks get generous limits—deep decomposition, wide parallelism, extra budget. Low-priority tasks are constrained to be cheap and fast.
+Generated at build time. Contains versioned file payloads for Bun-compiled binaries. When running as a Bun binary, the runtime extracts bundled files to `~/.chrysalis/bundled/{version}/`.
 
-The explosion detector monitors all dimensions:
+### Task Prompts and Skills
 
-```racket
-(define (detect-explosion phenotype limits)
-  (cond
-    [(> (DecompositionPhenotype-depth phenotype)
-        (DecompositionLimits-max-depth limits))
-     'depth]
-    [(> (DecompositionPhenotype-breadth phenotype)
-        (DecompositionLimits-max-breadth limits))
-     'breadth]
-    [(> (DecompositionPhenotype-accumulated-cost phenotype)
-        (DecompositionLimits-max-cost limits))
-     'cost]
-    [(> (DecompositionPhenotype-context-size phenotype)
-        (DecompositionLimits-max-context limits))
-     'context]
-    [(< (DecompositionPhenotype-success-rate phenotype)
-        (DecompositionLimits-min-success-rate limits))
-     'low-success]
-    [else #f]))
-```
+The Pi runtime points to two directories passed as CLI arguments:
+- `--prompt-template`: Directory containing prompt templates (typically `pi/prompts/`)
+- `--skill`: Directory containing skill definitions (typically `pi/skills/`)
 
-When any dimension exceeds its limit, an explosion is detected. The system doesn't simply fail—it rolls back to a checkpoint and tries an alternative approach.
-
-The checkpoint mechanism captures tree structure and phenotype at key points:
-
-```racket
-(define (checkpoint! state reason)
-  (define snap (snapshot-tree (DecompositionState-tree state)))
-  (define cp (DecompositionCheckpoint snap
-                                       (DecompositionState-phenotype state)
-                                       (DecompositionState-steps-taken state)
-                                       reason))
-  (set-DecompositionState-checkpoints! state 
-                                        (cons cp (DecompositionState-checkpoints state)))
-  state)
-```
-
-Checkpoints are created before risky operations—branching into subtasks, attempting expensive LLM calls. If the operation leads to explosion, `rollback!` restores the previous state and the system can try a different path.
-
-### Sub-Agent Management
-
-The sub-agent system in `sub-agent.rkt` enables parallel execution with focused tool profiles. The key insight is that not every subtask needs access to all tools—in fact, restricting tools improves focus and safety.
-
-### HyperAgents Evolutionary Loop
-
-The core improvement mechanism in Chrysalis Forge is the evolutionary loop implemented in `src/core/agent-evolution.rkt`, inspired by the HyperAgents framework. This loop operates on agent components (prompts, workflows) rather than just task instances.
-
-The cycle consists of four distinct stages:
-
-1. **Selection**: A parent variant is selected from the `AgentArchive`. Selection is non-greedy, utilizing a mix of best-performing elites and recent variants to maintain exploration pressure.
-2. **Mutation**: A meta-agent generates a new candidate variant by applying feedback-driven modifications to the parent.
-3. **Staged Evaluation**:
-   - **Smoke Stage**: The candidate is run against a small set of representative tasks. If the success rate falls below a viability threshold (default 50%), the candidate is rejected immediately.
-   - **Full Stage**: Viable candidates proceed to extensive benchmarks to established precise performance phenotypes.
-4. **Archival**: The results are recorded in the `AgentArchive`, updating the lineage tree and informing future selection cycles.
-
-This loop provides the "outer" learning capability of the system, while GEPA provides the "inner" reflection loop for immediate context improvement.
-
-Four profiles are defined:
-
-```racket
-(define PROFILE-EDITOR
-  '("read_file" "write_file" "patch_file" "preview_diff" "list_dir"))
-
-(define PROFILE-RESEARCHER
-  '("read_file" "list_dir" "grep_code" "web_search" "web_fetch" "web_search_news"))
-
-(define PROFILE-VCS
-  '("git_status" "git_diff" "git_log" "git_commit" "git_checkout"
-    "jj_status" "jj_log" "jj_diff" "jj_undo" "jj_op_log" "jj_op_restore"
-    "jj_workspace_add" "jj_workspace_list" "jj_describe" "jj_new"))
-
-(define PROFILE-ALL #f)  ; No filtering
-```
-
-The **editor** profile focuses on file modification. A sub-agent with this profile can read, write, and patch files but can't search the web or run git commands.
-
-The **researcher** profile focuses on information gathering. It can read files and search but can't modify anything.
-
-The **vcs** profile focuses on version control. It has access to both git and Jujutsu (jj) commands, enabling sophisticated repository operations.
-
-Spawning a sub-agent creates a new thread with filtered tools:
-
-```racket
-(define (spawn-sub-agent! prompt run-fn #:context [context ""] #:profile [profile 'all])
-  (set! agent-counter (add1 agent-counter))
-  (define id (format "task-~a" agent-counter))
-  (define result-channel (make-async-channel))
-  (define tools-filter (get-tool-profile profile))
-  
-  (define t 
-    (thread
-     (λ ()
-       (with-handlers ([exn:fail? (λ (e) 
-                                    (async-channel-put result-channel 
-                                                       (hash 'status 'error 
-                                                             'error (exn-message e))))])
-         (define result (run-fn prompt context tools-filter))
-         (async-channel-put result-channel (hash 'status 'done 'result result))))))
-  
-  (hash-set! SUB-AGENTS id 
-             (hash 'thread t 
-                   'channel result-channel 
-                   'status 'running 
-                   'prompt prompt
-                   'profile profile
-                   'result #f))
-  id)
-```
-
-The `run-fn` parameter is a function that executes the prompt with the given context and tool filter. By passing this as a parameter rather than hard-coding it, the sub-agent system remains flexible—different execution strategies can be plugged in.
-
-Results flow back through async channels, enabling non-blocking status checks:
-
-```racket
-(define (sub-agent-status id)
-  (define agent (hash-ref SUB-AGENTS id #f))
-  (unless agent (error 'task_status "Unknown task ID: ~a" id))
-  
-  (define t (hash-ref agent 'thread))
-  (define alive? (thread-running? t))
-  
-  (cond
-    [(not alive?)
-     ;; Thread finished, get result
-     (define result (async-channel-try-get (hash-ref agent 'channel)))
-     ;; ... return status with result ...]
-    [else
-     (hash 'status 'running 
-           'prompt (hash-ref agent 'prompt) 
-           'profile (hash-ref agent 'profile))]))
-```
-
-This enables progress monitoring without blocking. The main agent can spawn several sub-agents, periodically check their status, and collect results as they complete.
+These are resolved by `resolveResourceLayout()` to either the source tree (development) or the bundled package directory (production binary).
 
 ---
 
-## The Tools Layer: Capabilities and Safety
+## The Tools Layer
 
-The tools layer (`src/tools/acp-tools.rkt`) defines the 25 built-in tools that give the agent capabilities beyond pure language generation. Tools are the bridge between the LLM's reasoning and the external world.
+### RDF Tools
 
-Each tool is defined with a JSON schema describing its parameters:
+**File:** `ts/core/tools/rdf-tools.ts`
 
-```racket
-(hash 'type "function"
-      'function (hash 'name "write_file"
-                      'description "Write content to a file, creating it if needed"
-                      'parameters (hash 'type "object"
-                                        'properties 
-                                        (hash 'path (hash 'type "string" 
-                                                          'description "File path")
-                                              'content (hash 'type "string" 
-                                                             'description "Content to write"))
-                                        'required '("path" "content"))))
+Exposes three tools with structured parameter schemas for Pi agent consumption: `rdf_load`, `rdf_query`, `rdf_insert`. `executeRdfTool()` dispatches by name to the corresponding `rdf-store` functions.
+
+### Tool Profiles
+
+Subtasks and harness strategies use tool profiles to scope available tools:
+
+```typescript
+type ToolProfile = "editor" | "researcher" | "vcs" | "all";
 ```
 
-This schema is passed to the LLM as part of the tools specification. The model learns which tools are available and what arguments they expect.
+- **editor**: File read/write/edit tools
+- **researcher**: Search, grep, find, read tools
+- **vcs**: Git/jj branch, commit, merge tools
+- **all**: Full tool access
 
-Tool execution is gated by security level:
+`suggestProfileForSubtask()` in `ts/core/decomp-planner.ts` selects a profile for each subtask based on keyword analysis of its description.
 
-```racket
-(define (execute-acp-tool name args security-level)
-  (match name
-    ["read_file" 
-     (if (>= security-level 1)
-         (file->string (hash-ref args 'path))
-         "Permission Denied: Requires Level 1.")]
-    
-    ["write_file"
-     (if (and (>= security-level 2) 
-              (confirm-risk! "WRITE" (hash-ref args 'path)))
-         (begin
-           (display-to-file (hash-ref args 'content) 
-                            (hash-ref args 'path) 
-                            #:exists 'replace)
-           "File written successfully.")
-         "Permission Denied: Requires Level 2.")]
-    
-    ["run_term" 
-     (if (>= security-level 3) 
-         ... 
-         "Permission Denied: Requires Level 3.")]
-    ...))
+### Tool Evolution Engine
+
+**File:** `ts/core/tools/tool-evolution.ts`
+
+Manages novelty-gated mutation of tool definitions. Mirrors the prompt evolution pattern but applied to tool descriptions and parameters.
+
+![Tool evolution](../.vhs/tool-evolution.mp4)
+
+```typescript
+interface ToolVariant {
+  id: string;
+  toolName: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  active: boolean;
+  score: number;
+  noveltyScore: number;
+  createdAt: string;
+  model: string;
+  feedback: string;
+}
+
+interface ToolEvolutionState {
+  variants: Record<string, ToolVariant[]>;
+  fieldHistory: Record<string, EvolvableToolField>;
+  updatedAt: string;
+}
 ```
 
-Security levels form a hierarchy:
+`evolveTool()` mutates a tool's description and/or parameters via LLM (or heuristic append fallback). Novelty is computed as the maximum n-gram trigram distance between the candidate and all existing variants for that tool. Variants below the novelty threshold (default 0.25) are rejected (marked `active: false`). State is persisted to `.chrysalis/state/tool-evolution.json`.
 
-- **Level 0** (read-only): No execution, only conversation
-- **Level 1** (sandbox): Read files, safe operations
-- **Level 2** (limited I/O): Write files with confirmation
-- **Level 3** (full): Shell access with approval
+The engine provides: `evolveToolDescription()`, `evolveToolParameters()`, `getActiveToolVariant()` (returns highest-scoring active variant), `listToolVariants()`, `archiveToolVariant()`, `selectToolVariant()`, `toolEvolutionStats()`.
 
-The `confirm-risk!` function implements user approval for sensitive operations. At level 2, writes prompt for confirmation. At level 3 ("god mode"), confirmation is skipped but operations are still logged.
+### Evolvable Tool Registry
 
-An optional LLM judge provides an additional safety layer:
+**File:** `ts/core/tools/tool-registry.ts`
 
-```racket
-(define (evaluate-safety action content)
-  (unless (llm-judge-param) (values #t ""))
-  
-  (define sender (make-openai-sender #:model (llm-judge-model-param)))
-  (define prompt 
-    (format "You are a Security Auditor. A user or agent is attempting:
-ACTION: ~a
-CONTENT: ~a
+Runtime singleton (`globalToolRegistry`) extending `EventEmitter` that tracks registered tools and delegates to the tool evolution engine. Tools can be enabled/disabled, evolved, and have variants selected at runtime without restart.
 
-Is this safe? Reply [SAFE] or [UNSAFE] with explanation." action content))
-  (define-values (ok? res usage) (sender prompt))
-  (if (and ok? (string-contains? res "[SAFE]"))
-      (values #t res)
-      (values #f res)))
+```typescript
+class EvovableToolRegistry extends EventEmitter {
+  registerTool(def, executor): void;
+  unregisterTool(name): boolean;
+  enableTool(name): boolean;
+  disableTool(name): boolean;
+  getActiveDefinition(name): ToolDefinition | undefined;
+  evolveToolDefinition(name, feedback, field?, threshold?): Promise<...>;
+  execute(name, args): Promise<string>;
+  listTools(): Array<{ name, enabled, version, hasEvolvedVariant }>;
+}
 ```
 
-When enabled, this LLM-as-judge reviews potentially dangerous operations before they execute. It's not foolproof, but it catches obvious problems like "delete all files" or "send credentials to external URL."
+`getActiveDefinition()` checks for evolved variants first (via `getActiveToolVariant()`), falling back to the base definition. The registry emits events (`tool:registered`, `tool:evolved`, `tool:enabled`, `tool:disabled`, `tool:variant-selected`, `tool:variant-archived`) that are wired into Pi's notification system on session start.
 
----
+### Judge Tools
 
-## The Entry Point: Modular Design
+**File:** `ts/core/tools/judge-tools.ts`
 
-The entry layer has been refactored into focused modules for maintainability:
+LLM-as-judge evaluation with heuristic fallback. `use_llm_judge` evaluates code/text against configurable criteria and a pass/fail threshold. `judge_quality` is a convenience wrapper for code quality evaluation. The heuristic scores based on: documentation presence, type annotations, error handling, test presence, and line length.
 
-- **`main.rkt`** (~470 lines): CLI parsing, mode dispatch (GUI, ACP, HTTP service, client), and the core `acp-run-turn` conversation loop
-- **`src/core/runtime.rkt`**: Shared parameters (`model-param`, `base-url-param`, session counters) and utility functions (`levenshtein`, `format-duration`)
-- **`src/core/commands.rkt`**: All slash command handlers (`/help`, `/config`, `/session`, `/thread`, `/models`, etc.) and session management helpers
-- **`src/core/repl.rkt`**: REPL loop, terminal raw mode handling, multiline input with bracketed paste support
+### Test Generation Tools
 
-The core execution loop:
+**File:** `ts/core/tools/test-tools.ts`
 
-1. Load or create context from the context store
-2. Parse user input (prompt, commands, configuration)
-3. If the input is a command (starts with `/`), dispatch to `handle-slash-command` in commands.rkt
-4. Otherwise, invoke the LLM with the current context and tools via `acp-run-turn`
-5. Process tool calls, executing them with appropriate security checks
-6. Log results to trace and eval stores
-7. Update context with new history (with automatic compaction if approaching token limits)
-8. Repeat
+LLM-backed test generation with framework auto-detection from file extension and content. `generate_tests` reads a source file, detects the framework (vitest/jest/pytest/golang), and generates tests via LLM (heuristic fallback generates basic existence/type checks). `generate_test_cases` generates concrete inputs/outputs for a function signature.
 
-The streaming response handler provides real-time output while accumulating tool calls:
+### Priority Tools
 
-```racket
-(define (responses-run-turn/stream messages tools send-delta! finish!)
-  ;; Stream response deltas to the user
-  ;; Accumulate tool calls
-  ;; On completion, return structured result
-  ...)
-```
+**File:** `ts/core/tools/priority-tools.ts`
 
-This streaming approach is essential for user experience. Rather than waiting for the entire response, users see output as it's generated, with tool calls processed as they complete.
+LLM-callable wrappers for profile management. `set_priority` delegates to `interpretProfilePhrase()` for natural language profile selection and persists via `saveProfileState()`. `suggest_priority` maps task types to profiles (debug→fast, implement→best, research→cheap).
 
----
+### Evolver Tools
 
-## The Visual Layer: CLI and GUI Enhancements
+**File:** `ts/core/tools/evolver-tools.ts`
 
-Chrysalis Forge provides rich visual feedback through two complementary systems: CLI terminal styling and GUI themed widgets.
-
-### CLI Visual Modules (`src/utils/`)
-
-The CLI visual layer provides terminal-based styling and animations:
-
-| Module | Purpose |
-|--------|---------|
-| `terminal-style.rkt` | ANSI colors, text formatting, themes (default, cyberpunk, dracula, etc.) |
-| `loading-animations.rkt` | Multi-style spinners (dots, blocks, arrows) and progress bars |
-| `message-boxes.rkt` | Styled boxes with Unicode borders for errors, warnings, success |
-| `tool-visualization.rkt` | Visual feedback during tool execution with timing |
-| `stream-effects.rkt` | Typewriter effects and markdown formatting for streaming output |
-| `intro-animation.rkt` | Animated ASCII art startup sequence |
-| `status-bar.rkt` | Persistent bottom bar showing session metrics |
-| `session-summary-viz.rkt` | Sparklines and bar charts for session statistics |
-| `theme-manager.rkt` | CLI theme configuration and persistence |
-
-The color system auto-detects terminal capabilities via `TERM` environment variable and respects `NO_COLOR` for accessibility. Example usage:
-
-```racket
-(require "src/utils/terminal-style.rkt")
-(displayln (error-message "Something went wrong"))  ; Red ✗ prefix
-(displayln (success-message "Operation complete"))  ; Green ✓ prefix
-(displayln (styled "Custom" #:fg 'cyan #:bold? #t))
-```
-
-Tool execution provides visual feedback:
-
-```racket
-(require "src/utils/tool-visualization.rkt")
-(with-tool-viz "read_file" (hash 'path "/etc/hosts")
-  (file->string "/etc/hosts"))
-;; Shows: ⠋ 📄 read_file (path: /etc/hosts)
-;; Then:  ✓ 📄 read_file [42ms]
-```
-
-### GUI Visual Modules (`src/gui/`)
-
-The GUI layer provides modern widget styling and animations:
-
-| Module | Purpose |
-|--------|---------|
-| `theme-system.rkt` | Theme management with 6 built-in themes, hex-to-color conversion |
-| `chat-widget.rkt` | Enhanced chat with message bubbles, streaming cursor, code blocks |
-| `widget-framework.rkt` | Modern styled button, text field, choice widgets with hover effects |
-| `notification-system.rkt` | Toast notifications (info, success, warning, error) |
-| `animation-engine.rkt` | Tween animations with easing functions (60fps target) |
-
-Themes are persisted to `~/.config/chrysalis-forge/theme.json` and can be switched at runtime:
-
-```racket
-(require "src/gui/theme-system.rkt")
-(load-theme 'cyberpunk)
-(theme-ref 'accent)  ; Returns color% object
-```
-
-The chat widget supports streaming LLM responses with a blinking cursor:
-
-```racket
-(require "src/gui/chat-widget.rkt")
-(define chat (make-chat-widget parent))
-(send chat append-streaming-chunk "Hello ")
-(send chat append-streaming-chunk "world!")
-(send chat finish-streaming)
-```
+LLM-callable tools for tool evolution. All 8 tools (`evolve_tool`, `list_tools`, `tool_variants`, `select_tool_variant`, `enable_tool`, `disable_tool`, `tool_stats`, `tool_evolution_stats`) delegate to `globalToolRegistry`. This makes the tool system self-referential: the agent uses its own tools to evolve its own tools.
 
 ---
 
 ## Design Principles
 
-Several principles guided the architecture:
+**Evolvability over correctness.** Every prompt and strategy is treated as a hypothesis. The evolutionary loop replaces components rather than debugging them. A poor system prompt is evolved away, not patched.
 
-**Separation of Concerns**: Each layer has a clear responsibility. Stores handle persistence. LLM handles model interaction. Core handles orchestration. Tools handle capabilities. This separation makes the system easier to understand, test, and modify.
+**Heuristic fallback everywhere.** Every LLM-dependent operation has a deterministic fallback: task planning, decomposition, autonomous evolution decisions, and prompt rewriting all degrade gracefully when no provider is configured or when calls timeout.
 
-**Explicit State**: All state is captured in explicit data structures—`Ctx`, `DecompositionState`, `ModuleArchive`. There's no hidden global state that makes reasoning difficult. Every function's behavior is determined by its inputs.
+**JSON-backed simplicity.** All stores use JSON files on disk. No external databases, no SQLite, no server processes. This trades query performance for zero-dependency portability and human-readability.
 
-**Fail-Safe Defaults**: When something goes wrong, the system degrades gracefully. Unknown priorities fall back to defaults. Failed decomposition triggers rollback. Missing tools return informative errors rather than crashing.
+**Terminal-first, no GUI.** The Racket GUI layer was removed in the TypeScript migration. All interaction is through the CLI or the Pi terminal agent. This is a deliberate constraint, not an omission.
 
-**Observable Execution**: Everything is logged. Traces capture every operation. Evals track every outcome. This observability is what enables learning—you can't improve what you can't measure.
+**Atomic writes.** Critical stores (context, thread, store-registry) use `writeFile` + `rename` to avoid partial writes. Append-only stores (eval, trace) use `appendFile` for concurrent safety.
 
-**Composable Components**: Modules, tools, and profiles are designed for composition. New tools can be added without modifying existing ones. New profiles can be defined by listing tool names. New modules can be created by combining signatures with strategies.
+**Phenotype-driven selection.** Both evolution entries and decomposition patterns are selected by phenotype distance rather than score alone. MAP-Elites binning ensures behavioral diversity is preserved alongside quality.
 
-These principles reflect the conviction that building reliable AI systems requires engineering discipline, not just bigger models. Chrysalis Forge is infrastructure for that discipline.
+**Bandit over manual selection.** Model selection for evolution and planning uses Thompson sampling on success/failure feedback. The system learns which providers perform best for which tasks without explicit configuration.
+
+**Autonomous but bounded.** Autonomous evolution triggers on natural lifecycle events but is constrained by cooldowns and novelty gates. The system can improve itself without human intervention, but cannot spiral into infinite self-modification.
+
+**Dynamic stores as escape hatch.** The store registry (`kv`, `log`, `set`, `counter`) allows the agent to create ad-hoc persistence at runtime. The meta-prompt is explicitly told to consider whether agents should create stores for tracking their own performance.

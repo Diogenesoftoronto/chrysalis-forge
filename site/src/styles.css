@@ -1,0 +1,15 @@
+/* Global reset only — component styles come from Base Web (Styletron). */
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

@@ -1,3 +1,4 @@
+Output .vhs/features-overview.mp4
 Output .vhs/features-overview.gif
 Set FontSize 14
 Set Width 1200
