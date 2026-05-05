@@ -1,21 +1,65 @@
 # Agent Architecture in Chrysalis Forge
 
-Chrysalis Forge defines agents as **Evolvable Modules** that combine logic, state, optimization, and self-improvement.
+Chrysalis Forge defines agents as **Evolvable Modules** that combine logic, state, optimization, and self-improvement. The TypeScript implementation routes sub-agent orchestration through the Pi runtime, uses JSON-backed stores, and exposes a terminal-first CLI.
+
+## Pi Sibling Agent (`pi/`)
+
+Alongside the TypeScript harness, the repo ships a lightweight, terminal-first agent under `pi/`:
+
+- `pi/prompts/{architect,review,ship}.md` — task prompts for design, review, and implementation
+- `pi/skills/ax-workflows` — route structured planning/eval through Ax programs, falling back to deterministic heuristics
+- `pi/skills/terminal-first` — keep work on the shell path before any GUI detour
+- `pi/architecture.mmd` / `pi/architecture.svg` — oxdraw-rendered overview (`oxdraw -i pi/architecture.mmd -o pi/architecture.svg`)
+
+Pi artifacts land in `.chrysalis/outputs/` so they stay inspectable from the command line.
 
 ## Core Components
 
-### 1. Signatures (`src/llm/dspy-core.rkt`)
-Signatures define the interface of an agent's task — input fields and expected output fields.
-```racket
-(define OptSig (signature Opt (in [inst string?] [fails string?]) (out [thought string?] [new_inst string?])))
+### 1. Types (`ts/core/types.ts`)
+
+TypeScript interfaces define the agent's data model — signatures, harness strategies, evolution state, archive entries, profiles, and all store schemas. Key types include:
+
+- `HarnessStrategy` — 12 evolvable fields controlled by 9 signal detectors
+- `EvolutionState` — current prompts, archive, bandit model state, profile stats
+- `ArchiveEntry` — phenotype, instruction, family lineage, evaluation history
+- `ChrysalisProfile` — named priority profile with model and tool preferences
+- `Phenotype` — `[cost, latency, tokens]` feature vector for MAP-Elites binning
+
+### 2. Evolution Engine (`ts/core/evolution.ts`)
+
+GEPA-style evolutionary loop with MAP-Elites archiving and bandit model selection:
+
+```typescript
+const { state, entry, noveltyScore } = await evolveSystemPrompt(cwd, feedback, currentProfile);
 ```
 
-### 2. Modules (`src/llm/dspy-core.rkt`)
-- **Predict**: Direct completion based on a signature
-- **ChainOfThought (CoT)**: Structured reasoning before output
-- **Demos**: Few-shot examples to guide performance
+Key functions:
+- `evolveSystemPrompt` — LLM-rewrites the system prompt, gates by novelty score
+- `evolveMetaPrompt` — evolves the optimizer prompt itself
+- `evolveHarnessStrategy` — mutates harness parameters based on detected signals
+- `chooseExecutionModel` — Thompson sampling via Beta-bandit to pick LLM provider
+- `runAutonomousEvolution` — cooldown check → LLM decision → apply mutations
 
-### 3. Context & Persistence (`src/stores/context-store.rkt`)
+### 3. Decomposition Planner (`ts/core/decomp-planner.ts`)
+
+Task decomposition with LLM-backed and heuristic decomposition:
+
+```typescript
+const { subtasks, patternId } = await runDecomposition(cwd, task, taskType);
+```
+
+Key functions:
+- `classifyTask` — returns task type: `refactor`, `implement`, `debug`, `research`, `test`, `document`, or `general`
+- `decomposeTaskLLM` — LLM-backed decomposition via Ax prompt (falls back to heuristic)
+- `heuristicDecomposition` — rule-based decomposition based on task type
+- `suggestProfileForSubtask` — maps subtask description to tool profile
+
+### 4. Priority Interpretation (`ts/core/priority.ts`)
+
+Natural language priority selection — interpret phrases like "I need accuracy" into named profiles.
+
+### 5. Context & Persistence (`ts/core/stores/context-store.ts`)
+
 Agents operate within a `Ctx` (Context):
 - `system`: High-level persona and rules
 - `memory`: Working memory/scratchpad
@@ -28,95 +72,66 @@ Agents operate within a `Ctx` (Context):
 
 **Project Rules**: `.chrysalis/rules.md` in the working directory is automatically appended to the system prompt.
 
-### 4. Tool System (`src/tools/acp-tools.rkt`)
+### 6. RDF Tools (`ts/core/tools/rdf-tools.ts`)
 
-**28+ Tools** organized by category:
+Three tool definitions exposed to the Pi agent:
 
-| Category | Tools |
-|----------|-------|
-| **File** | read_file, write_file, patch_file, preview_diff, open_in_editor, file_rollback, file_rollback_list, list_dir, grep_code |
-| **Git** | git_status, git_diff, git_log, git_commit, git_checkout |
-| **Jujutsu** | jj_status, jj_log, jj_diff, jj_undo, jj_op_log, jj_op_restore, jj_workspace_add, jj_workspace_list, jj_describe, jj_new |
-| **Evolution** | suggest_profile, profile_stats, evolve_system, log_feedback, use_llm_judge |
-| **MCP** | add_mcp_server (dynamically adds external tool servers) |
+| Tool | Description |
+|------|-------------|
+| `rdf_load` | Load triples from a file into a named graph |
+| `rdf_query` | Query the knowledge graph with pattern syntax |
+| `rdf_insert` | Insert a single triple or quad |
 
-### 5. Sub-Agents (`src/core/sub-agent.rkt`)
+Dispatched via `executeRdfTool(cwd, name, args)`.
 
-Parallel task execution with specialized tool profiles:
+## Stores Layer (`ts/core/stores/`)
 
-```racket
-(spawn-sub-agent! "Refactor this file" run-fn #:profile 'editor)
-```
+All stores are JSON-backed for zero-dependency portability:
 
-**Profiles**:
-- `editor`: File creation/modification tools
-- `researcher`: Read-only search tools
-- `vcs`: Git + Jujutsu tools
-- `all`: Full toolkit
+| Store | File | Purpose |
+|-------|------|---------|
+| `context-store.ts` | `.chrysalis/state/context.json` | Agent context (system, memory, tool-hints, mode) |
+| `eval-store.ts` | `.chrysalis/state/evals.jsonl` | Evaluation records for profile learning |
+| `trace-store.ts` | `.chrysalis/state/traces.jsonl` | Task execution traces |
+| `cache-store.ts` | `.chrysalis/state/web-cache.json` | HTTP response cache |
+| `vector-store.ts` | `.chrysalis/state/vectors.json` | Semantic similarity search |
+| `rdf-store.ts` | `.chrysalis/state/rdf/graph.db` | Triple/quad knowledge graph |
+| `thread-store.ts` | `.chrysalis/state/threads.json` | Thread relations and context trees |
+| `session-stats.ts` | `.chrysalis/state/session-stats.json` | Session performance metrics |
+| `decomp-archive.ts` | `.chrysalis/state/decomp-archives/` | Archived decomposition patterns |
+| `rollback-store.ts` | `.chrysalis/state/rollbacks/` | File version snapshots |
+| Dynamic registry | `.chrysalis/state/stores/` | User-created kv/log/set/counter stores |
 
-Tools: `spawn_task`, `await_task`, `task_status`
+## Execution Loop (`ts/cli/main.ts`)
 
-### 6. Test Generation (`src/utils/test-gen.rkt`)
+CLI dispatches commands:
 
-LLM-powered, language-agnostic test generation:
-```racket
-(test-gen-execute args api-key send-fn)
-```
+| Command | Purpose |
+|---------|---------|
+| `shell` | Launch Pi interactive session |
+| `plan <task>` | Write task plan artifact |
+| `decomp <task>` | Run task decomposition |
+| `profile [phrase]` | Show/interpret priority profile |
+| `evolve <feedback>` | Evolve system prompt |
+| `meta-evolve <feedback>` | Evolve meta/optimizer prompt |
+| `harness <feedback>` | Mutate harness strategy |
+| `archive` | View evolution archive |
+| `stats` | Evolution state summary |
+| `threads` / `thread <id>` | Thread management |
+| `sessions` / `session <name>` | Session management |
+| `rdf-load` / `rdf-query` / `rdf-insert` | RDF knowledge graph |
+| `stores` / `store` | Dynamic store operations |
+| `rollback <path>` | File rollback |
+| `doctor` | Health check |
 
-## Optimization & Evolution
-
-### GEPA (General Evolvable Prompting Architecture)
-`optimizer-gepa.rkt` — Evolves system prompts based on feedback:
-```racket
-(gepa-evolve! "The agent should be more concise")
-```
-
-### Meta-Optimization
-`optimizer-meta.rkt` + `dspy-compile.rkt` — Evolves the optimizer itself:
-1. Bootstrap few-shot examples
-2. Instruction mutation testing
-
-### Eval Store (`src/stores/eval-store.rkt`)
-Tracks sub-agent performance for learning:
-- `log-eval!`: Record task results
-- `get-profile-stats`: View success rates per profile
-- `suggest-profile`: Recommend optimal profile for task type
-- `evolve-profile!`: Analyze and improve profiles
-
-**Feedback Loop**:
-```
-log_feedback → eval-store → profile_stats → suggest_profile
-                          ↓
-              evolve_system → GEPA → improved prompts
-```
-
-## Execution Loop (Modular Entry Layer)
-
-The entry layer is split into focused modules:
-
-| Module | Purpose |
-|--------|---------|
-| `main.rkt` | CLI parsing, mode dispatch, `acp-run-turn` conversation loop (~470 lines) |
-| `src/core/runtime.rkt` | Shared parameters (`model-param`, session counters) and helpers |
-| `src/core/commands.rkt` | Slash command handlers and session management |
-| `src/core/repl.rkt` | REPL loop, terminal handling, multiline input |
-
-**Core Loop**:
+**Core Loop** (inside Pi session):
 1. **Prompt Rendering**: Module + context + inputs compiled to prompt
-2. **Tool Execution**: Security-gated via `execute-acp-tool`
-3. **Auto-Correction**: `run-code-with-retry!` retries failed executions
-4. **Context Compaction**: Automatic summarization when approaching token limits
-5. **Trace Logging**: All tasks logged to `traces.jsonl`
-6. **Eval Logging**: Profile performance logged to `evals.jsonl`
+2. **Tool Execution**: Security-gated via tool dispatch
+3. **Context Compaction**: Automatic summarization when approaching token limits
+4. **Trace Logging**: All tasks logged to `traces.jsonl`
+5. **Eval Logging**: Profile performance logged to `evals.jsonl`
 
-## Process Supervision (`src/core/process-supervisor.rkt`)
-
-Manage long-running services:
-- `spawn-service!`: Start background process
-- `stop-service!`: Terminate service
-- `list-services!`: View active services
-
-## Thread System (`src/core/thread-manager.rkt`, `src/stores/thread-store.rkt`)
+## Thread System (`ts/core/stores/thread-store.ts`)
 
 Threads provide user-facing conversation continuity while hiding session implementation details.
 
@@ -127,35 +142,63 @@ Project → Thread → Context Nodes
               Sessions
 ```
 
+### Key Functions
+
+```typescript
+threadCreate(cwd, title, project?)          // Create thread, returns T-<hex> ID
+threadContinue(cwd, fromId, title?)         // Continuation thread with continues_from
+threadSpawnChild(cwd, parentId, title)      // Child thread with child_of
+threadRelationCreate(cwd, fromId, toId, type) // Custom relation edge
+contextCreate(cwd, threadId, title, opts?)  // Create context node
+contextTree(cwd, threadId)                  // Build hierarchical context tree
+```
+
 ### Thread Relations
 - `continues_from`: Linear continuation of a thread
 - `child_of`: Hierarchical breakdown into subtopics
 - `relates_to`: Loose association
 
-### CLI Commands
-```
-/thread list           - List all threads
-/thread new <title>    - Create new thread
-/thread switch <id>    - Switch to a thread
-/thread continue       - Create continuation thread
-/thread child <title>  - Create child thread
-/thread info           - Show current thread details
-/thread context add    - Add hierarchical context node
+## Optimization & Evolution
+
+### GEPA (General Evolvable Prompting Architecture)
+
+`ts/core/evolution.ts` — Evolves system prompts based on feedback:
+
+```typescript
+const { state, entry, noveltyScore } = await evolveSystemPrompt(cwd, feedback, profile);
 ```
 
-### HTTP API
-- `GET/POST /v1/threads` - List/create threads
-- `GET/PATCH /v1/threads/:id` - Get/update thread
-- `POST /v1/threads/:id/messages` - Chat on thread
-- `POST /v1/threads/:id/relations` - Link threads
-- `GET/POST /v1/threads/:id/contexts` - Context nodes
-- `GET/POST /v1/projects` - Project management
+### Meta-Optimization
 
-### Key Functions
-```racket
-(ensure-thread user-id #:title "My task")     ; Get or create thread
-(thread-continue user-id from-id)              ; Create continuation
-(thread-spawn-child user-id parent-id title)   ; Create child thread
-(get-or-create-session user-id thread-id)      ; Hidden session management
-(auto-rotate-if-needed! user-id thread-id)     ; Auto session rotation
+`evolveMetaPrompt` — Evolves the optimizer prompt itself:
+1. Bootstrap few-shot examples
+2. Instruction mutation testing
+3. Novelty-gated archival
+
+### Eval Store (`ts/core/stores/eval-store.ts`)
+
+Tracks performance for learning:
+- `recordEvolutionEvaluation`: Log evaluation results
+- `suggestProfileFromStats`: Recommend optimal profile for task type
+- `chooseExecutionModel`: Bandit model selection for provider choice
+
+**Feedback Loop**:
 ```
+log_feedback → eval-store → profile_stats → suggest_profile
+                          ↓
+            evolve_system → GEPA → improved prompts
+```
+
+## Dynamic Store Registry
+
+The TypeScript implementation adds a dynamic store registry (`kv/log/set/counter`) not present in the Racket version. Users can create named stores from the CLI:
+
+```bash
+chrysalis store create my-kv kv        # Key-value store
+chrysalis store create my-counter counter  # Counter store
+chrysalis store set my-kv foo bar      # Write value
+chrysalis store get my-kv foo          # Read value
+chrysalis stores                       # List all stores
+```
+
+Data lives under `.chrysalis/state/stores/<namespace>.json`.

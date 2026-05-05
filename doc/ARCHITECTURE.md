@@ -27,11 +27,7 @@ The framework migrated from Racket to TypeScript, shedding the GUI layer and vis
 │  Dynamic Store Registry (kv/log/set/counter)         │
 ├─────────────────────────────────────────────────────┤
 │  Tools  (ts/core/tools/)                             │
-│  Evolution │ Judge │ Test │ Priority │ Evolver │ Git   │
-│  Jujutsu │ Web │ Sub-Agent │ Store │ Cache │ RDF    │
-│  Rollback │ Decomp                        │
-│  Tool Registry (runtime enable/disable/evolve)       │
-│  Tool Evolution (novelty-gated variant management)   │
+│  RDF tools │ tool profiles (editor/researcher/vcs/all)│
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -330,8 +326,6 @@ Natural language to profile mapping. `interpretProfilePhrase()` parses user phra
 
 Registers 20 commands with the Pi agent runtime and hooks into `session_start` for autonomous evolution:
 
-![Evolution cycle](../.vhs/evo-cycle.mp4)
-
 | Command | Action |
 |---------|--------|
 | `/plan` | Write a task plan artifact via Ax |
@@ -339,7 +333,6 @@ Registers 20 commands with the Pi agent runtime and hooks into `session_start` f
 | `/evolve` | Force system prompt evolution |
 | `/meta-evolve` | Force meta/optimizer prompt evolution |
 | `/harness` | Force harness strategy mutation |
-| `/evolve-tool` | Evolve a tool's definition from feedback |
 | `/archive` | Browse archived evolution variants |
 | `/stats` | Show evolution and profile statistics |
 | `/outputs` | Browse generated artifacts |
@@ -407,84 +400,6 @@ type ToolProfile = "editor" | "researcher" | "vcs" | "all";
 - **all**: Full tool access
 
 `suggestProfileForSubtask()` in `ts/core/decomp-planner.ts` selects a profile for each subtask based on keyword analysis of its description.
-
-### Tool Evolution Engine
-
-**File:** `ts/core/tools/tool-evolution.ts`
-
-Manages novelty-gated mutation of tool definitions. Mirrors the prompt evolution pattern but applied to tool descriptions and parameters.
-
-![Tool evolution](../.vhs/tool-evolution.mp4)
-
-```typescript
-interface ToolVariant {
-  id: string;
-  toolName: string;
-  description: string;
-  parameters: Record<string, unknown>;
-  active: boolean;
-  score: number;
-  noveltyScore: number;
-  createdAt: string;
-  model: string;
-  feedback: string;
-}
-
-interface ToolEvolutionState {
-  variants: Record<string, ToolVariant[]>;
-  fieldHistory: Record<string, EvolvableToolField>;
-  updatedAt: string;
-}
-```
-
-`evolveTool()` mutates a tool's description and/or parameters via LLM (or heuristic append fallback). Novelty is computed as the maximum n-gram trigram distance between the candidate and all existing variants for that tool. Variants below the novelty threshold (default 0.25) are rejected (marked `active: false`). State is persisted to `.chrysalis/state/tool-evolution.json`.
-
-The engine provides: `evolveToolDescription()`, `evolveToolParameters()`, `getActiveToolVariant()` (returns highest-scoring active variant), `listToolVariants()`, `archiveToolVariant()`, `selectToolVariant()`, `toolEvolutionStats()`.
-
-### Evolvable Tool Registry
-
-**File:** `ts/core/tools/tool-registry.ts`
-
-Runtime singleton (`globalToolRegistry`) extending `EventEmitter` that tracks registered tools and delegates to the tool evolution engine. Tools can be enabled/disabled, evolved, and have variants selected at runtime without restart.
-
-```typescript
-class EvovableToolRegistry extends EventEmitter {
-  registerTool(def, executor): void;
-  unregisterTool(name): boolean;
-  enableTool(name): boolean;
-  disableTool(name): boolean;
-  getActiveDefinition(name): ToolDefinition | undefined;
-  evolveToolDefinition(name, feedback, field?, threshold?): Promise<...>;
-  execute(name, args): Promise<string>;
-  listTools(): Array<{ name, enabled, version, hasEvolvedVariant }>;
-}
-```
-
-`getActiveDefinition()` checks for evolved variants first (via `getActiveToolVariant()`), falling back to the base definition. The registry emits events (`tool:registered`, `tool:evolved`, `tool:enabled`, `tool:disabled`, `tool:variant-selected`, `tool:variant-archived`) that are wired into Pi's notification system on session start.
-
-### Judge Tools
-
-**File:** `ts/core/tools/judge-tools.ts`
-
-LLM-as-judge evaluation with heuristic fallback. `use_llm_judge` evaluates code/text against configurable criteria and a pass/fail threshold. `judge_quality` is a convenience wrapper for code quality evaluation. The heuristic scores based on: documentation presence, type annotations, error handling, test presence, and line length.
-
-### Test Generation Tools
-
-**File:** `ts/core/tools/test-tools.ts`
-
-LLM-backed test generation with framework auto-detection from file extension and content. `generate_tests` reads a source file, detects the framework (vitest/jest/pytest/golang), and generates tests via LLM (heuristic fallback generates basic existence/type checks). `generate_test_cases` generates concrete inputs/outputs for a function signature.
-
-### Priority Tools
-
-**File:** `ts/core/tools/priority-tools.ts`
-
-LLM-callable wrappers for profile management. `set_priority` delegates to `interpretProfilePhrase()` for natural language profile selection and persists via `saveProfileState()`. `suggest_priority` maps task types to profiles (debug→fast, implement→best, research→cheap).
-
-### Evolver Tools
-
-**File:** `ts/core/tools/evolver-tools.ts`
-
-LLM-callable tools for tool evolution. All 8 tools (`evolve_tool`, `list_tools`, `tool_variants`, `select_tool_variant`, `enable_tool`, `disable_tool`, `tool_stats`, `tool_evolution_stats`) delegate to `globalToolRegistry`. This makes the tool system self-referential: the agent uses its own tools to evolve its own tools.
 
 ---
 

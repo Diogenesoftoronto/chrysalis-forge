@@ -1,1074 +1,524 @@
-# Chrysalis Forge API Reference
+# Chrysalis Forge — API Reference
 
-This document provides the programming interface for developers who want to extend Chrysalis Forge or embed its components in other systems. Rather than a dry enumeration of function signatures, we'll walk through the API by explaining what problems each component solves and how to use it effectively.
-
----
-
-## The DSPy Core: Typed LLM Interactions
-
-The foundation of Chrysalis Forge's programming model lives in `src/llm/dspy-core.rkt`. This module provides the abstractions that turn ad-hoc LLM prompting into structured, typed function calls.
-
-### Signatures: Declaring What Goes In and Out
-
-A `Signature` declares the interface of an LLM task—what inputs it expects and what outputs it produces. This explicitness enables validation, composition, and optimization.
-
-```racket
-(struct SigField (name pred) #:transparent)
-(struct Signature (name ins outs) #:transparent)
-```
-
-Each field has a `name` (a symbol) and a `pred` (a predicate function like `string?` or `number?`). The predicate isn't just documentation—it's used to validate responses.
-
-Creating signatures by hand is tedious, so a macro provides cleaner syntax:
-
-```racket
-(define MySig 
-  (signature MyTask 
-    (in [query string?] [context string?]) 
-    (out [answer string?] [confidence number?])))
-```
-
-This creates a signature named `MyTask` with two string inputs (`query` and `context`) and two outputs (`answer` as string, `confidence` as number).
-
-The signature becomes the contract that the rest of the system relies on. When you run a module, the outputs are parsed and validated against the signature. If the LLM returns malformed output, you find out immediately rather than having corruption propagate through your system.
-
-### Modules: Wrapping Signatures with Execution Strategy
-
-A `Module` pairs a signature with instructions and execution strategy:
-
-```racket
-(struct Module (id sig strategy instructions demos params) #:transparent)
-```
-
-The `strategy` determines how the prompt is structured. Two strategies are available:
-
-**Predict** (`'predict`) generates output directly. It's fast and works well for straightforward tasks.
-
-**ChainOfThought** (`'cot`) instructs the model to reason step-by-step before producing output. This often improves accuracy on complex tasks at the cost of additional tokens.
-
-Creating modules uses constructor functions:
-
-```racket
-;; Simple direct prediction
-(define summarizer
-  (Predict SummarizeSig
-    #:instructions "Summarize the input text concisely."))
-
-;; Chain-of-thought reasoning
-(define analyzer
-  (ChainOfThought AnalysisSig
-    #:instructions "Analyze the code for potential issues. Think through each consideration."
-    #:demos (list (hash 'input "example code" 
-                        'thought "First I notice..."
-                        'analysis "The code has..."))))
-```
-
-The `demos` parameter provides few-shot examples. Each demo is a hash mapping field names to values, showing the model what good input/output pairs look like. Including a few well-chosen demos often improves quality dramatically.
-
-The `params` hash passes additional settings like temperature:
-
-```racket
-(define creative-module
-  (Predict CreativeSig
-    #:instructions "Generate creative variations."
-    #:params (hash 'temperature 0.9)))
-```
-
-### Module Archives: Collections for Priority-Based Selection
-
-When you compile a module (optimizing it via MAP-Elites), you get back a `ModuleArchive` containing multiple variants:
-
-```racket
-(struct ModuleArchive (id sig archive point-cloud default-id) #:transparent)
-```
-
-The `archive` hash maps bin keys to (score, module) pairs. Bin keys are lists like `'(cheap fast compact)` describing the phenotype bin. This enables fast lookup when someone asks for "the cheap one."
-
-The `point-cloud` is a list of (phenotype, module) pairs for continuous KNN search. When someone asks for "something balanced between speed and accuracy," geometric search finds the best match.
-
-You rarely create archives directly—they're produced by the `compile!` function. But you consume them by passing them to `run-module`:
-
-```racket
-;; Run with automatic selection based on context priority
-(define result (run-module my-archive ctx inputs send!))
-```
-
-The `run-module` function examines the `priority` in the context and selects the appropriate variant.
-
-### Contexts: Runtime State
-
-The `Ctx` structure carries all runtime state for an agent:
-
-```racket
-(struct Ctx (system memory tool-hints mode priority history compacted-summary) #:transparent)
-```
-
-Each field serves a specific purpose:
-
-**system** is the system prompt—the core instructions defining agent behavior. This is what GEPA evolves.
-
-**memory** is a working scratchpad for temporary state within a task.
-
-**tool-hints** provides guidance about tool usage that doesn't belong in the system prompt.
-
-**mode** gates tool access (`'ask`, `'architect`, `'code`, `'semantic`).
-
-**priority** specifies the performance profile—either a symbol (`'fast`, `'cheap`, `'best`) or a natural language string.
-
-**history** contains the conversation so far as a list of messages.
-
-**compacted-summary** holds a compressed summary of prior context when history grows too long.
-
-A convenience macro creates contexts with sensible defaults:
-
-```racket
-(define my-ctx
-  (ctx #:system "You are a helpful coding assistant."
-       #:mode 'code
-       #:priority 'best))
-```
-
-### Running Modules
-
-The `run-module` function executes a module (or selects from an archive and executes):
-
-```racket
-(define (run-module m ctx inputs send! #:trace [tr #f] #:cache? [cache? #t]) → RunResult)
-```
-
-The `inputs` parameter is a hash mapping input field names to values. The `send!` parameter is a function that actually calls the LLM—this abstraction allows different backends.
-
-The result is a `RunResult`:
-
-```racket
-(struct RunResult (ok? outputs raw prompt meta) #:transparent)
-```
-
-If `ok?` is true, `outputs` contains a hash of output field values. If false, something went wrong—the raw response is still available in `raw` for debugging.
-
-The `meta` hash includes execution metadata: elapsed time, token counts, model used. This feeds into phenotype extraction for evolution.
+> All functions are async unless noted otherwise. Every store/evolution function takes `cwd: string` as its first argument.
 
 ---
 
-## Geometric Selection: Finding the Right Variant
+## Types — `ts/core/types.ts`
 
-The `src/llm/dspy-selector.rkt` module handles priority-based selection from module archives.
+### Type Aliases
 
-### Phenotypes and Distance
-
-A `Phenotype` represents position in a 4D performance space:
-
-```racket
-(struct Phenotype (accuracy latency cost usage) #:transparent)
+```typescript
+type PiRuntimePreference = "embedded-only" | "prefer-embedded" | "standalone-only" | "prefer-standalone";
+type ChrysalisProfile = "fast" | "cheap" | "best" | "verbose";
+type ChrysalisTaskType = "build" | "bugfix" | "refactor" | "review" | "research" | "migration";
+type EvolutionFamily = "prompt" | "meta" | "workflow" | "harness";
+type ToolProfile = "editor" | "researcher" | "vcs" | "all";
+type StoreKind = "kv" | "log" | "set" | "counter";
 ```
 
-Each dimension is continuous. Distance between phenotypes uses Euclidean metric:
+### Core Interfaces
 
-```racket
-(define (phenotype-distance p1 p2)
-  (sqrt (+ (expt (- (Phenotype-accuracy p1) (Phenotype-accuracy p2)) 2)
-           (expt (- (Phenotype-latency p1) (Phenotype-latency p2)) 2)
-           (expt (- (Phenotype-cost p1) (Phenotype-cost p2)) 2)
-           (expt (- (Phenotype-usage p1) (Phenotype-usage p2)) 2))))
+```typescript
+interface Phenotype {
+  accuracy: number;  // 0–10
+  latency: number;   // lower is faster
+  cost: number;      // lower is cheaper
+  usage: number;     // token utilization
+}
+
+interface ArchiveEntry {
+  id: string;
+  family: EvolutionFamily;
+  taskFamily: string;
+  content: string;
+  score: number;
+  phenotype: Phenotype;
+  binKey: string;
+  createdAt: string;
+  active: boolean;
+  model: string;
+  metadata: Record<string, unknown>;
+}
+
+interface BanditArm { alpha: number; beta: number; }
+interface BanditState { arms: Record<string, BanditArm>; }
+
+interface HarnessStrategy {
+  contextBudget: number;
+  compactionThreshold: number;
+  strategyType: "predict" | "cot";
+  temperature: number;
+  topP: number;
+  toolHintWeight: number;
+  preferTools: boolean;
+  demoCount: number;
+  demoSelection: "random" | "similar" | "diverse";
+  preferCheapDecomp: boolean;
+  executionPriority: ChrysalisProfile;
+  mutationRate: number;
+}
+
+interface EvaluationRecord {
+  ts: number;
+  taskId: string;
+  success: boolean;
+  profile: ChrysalisProfile | string;
+  taskType: string;
+  toolsUsed: string[];
+  durationMs: number;
+  feedback: string;
+  candidateId?: string | null;
+  evalStage: string;
+  model?: string | null;
+  score?: number | null;
+  latencyMs?: number | null;
+  costUsd?: number | null;
+  binKey?: string | null;
+}
+
+interface EvolutionState {
+  currentSystemPrompt: string;
+  currentMetaPrompt: string;
+  harness: HarnessStrategy;
+  bandit: BanditState;
+  noveltyArchive: string[];
+  updatedAt: string;
+  lastAutonomousRunAt?: string;
+  autonomousRuns: number;
+  lastAutonomousReason?: string;
+}
+
+interface AutonomousEvolutionTrigger {
+  kind: "session_start" | "task_plan" | "evaluation" | "manual";
+  task?: string;
+  taskType?: ChrysalisTaskType;
+  profile?: ChrysalisProfile;
+  planSummary?: string;
+  force?: boolean;
+}
+
+interface AutonomousEvolutionDecision {
+  shouldEvolveSystem: boolean;
+  shouldEvolveMeta: boolean;
+  shouldMutateHarness: boolean;
+  reason: string;
+  focus: string[];
+}
+
+interface AutonomousEvolutionReport {
+  decision: AutonomousEvolutionDecision;
+  applied: boolean;
+  skippedReason?: string;
+  results: Array<{ target: string; status: "applied" | "skipped"; detail: string }>;
+}
+
+interface TaskPlan {
+  summary: string;
+  taskType: ChrysalisTaskType;
+  recommendedProfile: ChrysalisProfile;
+  deliverables: string[];
+  risks: string[];
+  firstSteps: string[];
+  mode: "heuristic" | "ax";
+  systemPrompt?: string;
+  harness?: HarnessStrategy;
+}
 ```
 
-Raw phenotypes have incompatible scales, so normalization is essential:
+### Session & Thread Types
 
-```racket
-(define (normalize-phenotype pheno mins maxs) → Phenotype)
+```typescript
+interface SessionContext {
+  system: string;
+  memory: string;
+  toolHints: string;
+  mode: "ask" | "code";
+  priority: ChrysalisProfile | string;
+  history: unknown[];
+  compactedSummary: string;
+}
+
+interface SessionMetadata {
+  id: string;
+  title?: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface SessionDB {
+  active: string;
+  items: Record<string, SessionContext>;
+  metadata: Record<string, SessionMetadata>;
+}
+
+interface ThreadData {
+  id: string;
+  title: string;
+  project?: string | null;
+  status: string;
+  summary?: string | null;
+  sessionName?: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface ThreadRelation { from: string; to: string; type: string; createdAt: number; }
+
+interface ContextNode {
+  id: string;
+  threadId: string;
+  parentId?: string | null;
+  title: string;
+  kind: string;
+  body?: string | null;
+  createdAt: number;
+  children?: ContextNode[];
+}
+
+interface ThreadsDB {
+  threads: Record<string, ThreadData>;
+  relations: ThreadRelation[];
+  contexts: Record<string, ContextNode>;
+  activeThread: string | null;
+}
 ```
 
-This maps each dimension to [0,1] based on the observed range in the point cloud.
+### Decomposition Types
 
-### Selecting Elites
-
-The `select-elite` function finds the closest module to a target phenotype:
-
-```racket
-(define (select-elite archive target) → Module)
+```typescript
+interface DecompStep { id: string; description: string; toolHints: string[]; dependencies: number[]; }
+interface DecompositionPattern { id: string; name: string; steps: DecompStep[]; metadata: Record<string, unknown>; }
+interface DecompPhenotype { depth: number; parallelism: number; toolDiversity: number; complexity: number; }
+interface DecompositionArchive {
+  taskType: string;
+  archive: Record<string, { score: number; pattern: DecompositionPattern }>;
+  pointCloud: Array<{ phenotype: DecompPhenotype; pattern: DecompositionPattern }>;
+  defaultId: string | null;
+}
+interface SubtaskDefinition { description: string; dependencies: number[]; profileHint: ToolProfile; }
+interface VotingConfig { nVoters: number; kThreshold: number; timeoutMs: number; decorrelate: boolean; }
+interface VotingResult<T> { consensus: boolean; tally: Map<T, number>; winner: T; margin: number; votes: T[]; }
 ```
 
-It normalizes all phenotypes in the point cloud, normalizes the target, computes distances, and returns the nearest match.
-
-### Mapping Natural Language to Phenotypes
-
-The `text->vector` function interprets priority descriptions:
-
-```racket
-(define (text->vector text [send! #f]) → Phenotype)
-```
-
-For recognized keywords ("fast", "cheap", "accurate"), it returns hardcoded phenotypes. For novel descriptions, it calls the LLM to interpret the request, returning a phenotype that captures the user's preferences.
-
-This enables natural language priority specification:
-
-```racket
-(define target (text->vector "I need accuracy but cost matters" send!))
-(define best-module (select-elite archive target))
-```
-
----
-
-## Geometric Decomposition: Breaking Down Complex Tasks
-
-The `src/core/geometric-decomposition.rkt` module implements MAKER-inspired task decomposition with self-regulation.
-
-### The Decomposition Phenotype
-
-Task decomposition has its own phenotype space:
-
-```racket
-(struct DecompositionPhenotype 
-  (depth breadth accumulated-cost context-size success-rate) 
-  #:transparent)
-```
-
-These five dimensions capture the shape of a decomposition:
-
-- **depth**: levels of subtask nesting
-- **breadth**: maximum parallel fan-out
-- **accumulated-cost**: total $ spent so far
-- **context-size**: peak context tokens
-- **success-rate**: fraction of subtasks succeeding
-
-### Limits and Explosion Detection
-
-Limits constrain how far decomposition can go:
-
-```racket
-(struct DecompositionLimits 
-  (max-depth max-breadth max-cost max-context min-success-rate) 
-  #:transparent)
-```
-
-The `limits-for-priority` function returns appropriate limits based on task priority:
-
-```racket
-(define (limits-for-priority priority budget context-limit) → DecompositionLimits)
-```
-
-Critical tasks get generous limits; low-priority tasks are constrained.
-
-Explosion detection checks all dimensions:
-
-```racket
-(define (detect-explosion phenotype limits) → (or/c symbol? #f))
-```
-
-Returns `'depth`, `'breadth`, `'cost`, `'context`, or `'low-success` if any limit is exceeded, `#f` otherwise.
-
-### State Management
-
-Decomposition state is mutable (for efficiency with large trees):
-
-```racket
-(struct DecompositionState 
-  (root-task task-type priority tree phenotype limits checkpoints steps-taken meta) 
-  #:transparent #:mutable)
-```
-
-Create initial state with:
-
-```racket
-(define (make-decomposition-state root-task task-type priority limits) → DecompositionState)
-```
-
-### Checkpoint and Rollback
-
-Before risky operations, save a checkpoint:
-
-```racket
-(define (checkpoint! state reason) → DecompositionState)
-```
-
-If explosion is detected, roll back:
-
-```racket
-(define (rollback! state) → DecompositionState)
-```
-
-Check if rollback is possible:
-
-```racket
-(define (has-checkpoints? state) → boolean?)
-```
-
-This checkpoint/rollback mechanism is what enables exploration of multiple decomposition strategies without committing irrevocably.
-
-### Tree Operations
-
-The decomposition tree uses `DecompNode` structures:
-
-```racket
-(struct DecompNode (id task status children result profile) #:transparent #:mutable)
-```
-
-Operations for tree manipulation:
-
-```racket
-(define (make-root-node task) → DecompNode)
-(define (add-child! parent-node child-node) → void?)
-(define (node-depth node tree) → integer?)
-(define (count-leaves tree) → integer?)
-(define (compute-breadth tree) → integer?)
-(define (mark-node-status! node status) → void?)
-(define (prune-node! node) → void?)
-```
-
-These enable building the task tree as decomposition proceeds, computing phenotype dimensions, and pruning failed branches.
-
----
-
-## Evolution: Improving Over Time
-
-The `src/core/optimizer-gepa.rkt` module implements reflective prompt evolution.
-
-### GEPA Evolution
-
-```racket
-(define (gepa-evolve! feedback [model (evolution-model-param)] #:task-family [task-family "general"]) → string?)
-```
-
-Takes natural language feedback about what's wrong, loads the current context, asks an LLM to produce an improved prompt, and saves the result. Automatically archives the new prompt as a versioned variant in the `AgentArchive`.
-
-Example:
-
-```racket
-(gepa-evolve! "The agent produces overly verbose explanations. It should be more concise.")
-```
-
-### Meta-Evolution
-
-```racket
-(define (gepa-meta-evolve! feedback [model "gpt-5.4-mini"]) → string?)
-```
-
-Evolves the optimizer's own instructions. This is the recursive self-improvement loop—when the optimization process itself can be improved, meta-evolution handles it.
-
-### Agent Evolution (HyperAgents Loop)
-
-The `src/core/agent-evolution.rkt` module implements the high-level evolutionary search loop.
-
-```racket
-(define (evolve-agent! type task-family feedback benchmark-fn 
-                       #:iterations [iterations 1] 
-                       #:model [model (evolution-model-param)]) → string?)
-```
-
-Executes a sequence of evolutionary iterations for a component type (`'prompt` or `'workflow`).
-
-```racket
-(define (select-next-parent archive task-family) → (or/c AgentVariant? #f))
-```
-
-Selects a suitable parent from the archive using a non-greedy strategy.
-
-```racket
-(define (run-candidate-eval! candidate benchmark-fn #:stage [stage "smoke"]) → AgentVariant?)
-```
-
-Runs a specific evaluation stage for a candidate and returns the variant with updated evaluation metadata.
-
-### Agent Archive: Versioned Component Storage
-
-The `src/stores/agent-archive.rkt` module manages the persistence of evolved variants.
-
-#### Data Structures
-
-```racket
-(struct AgentVariant 
-  (id parent-id type content eval-summary task-family metadata viable) 
-  #:transparent)
-```
-
-**id**: Unique identifier for the variant.
-**parent-id**: ID of the variant this was mutated from.
-**type**: `'prompt`, `'workflow`, `'profile`, or `'config`.
-**content**: The component data (e.g., prompt string or workflow hash).
-**eval-summary**: Hash containing metrics like `success_rate`, `avg_duration`, and `cost`.
-**task-family**: The category of tasks this variant is intended for.
-**viable**: Boolean indicating if the variant passed the evaluation gates.
-
-#### API
-
-```racket
-(define (load-agent-archive type) → AgentArchive?)
-(define (save-agent-archive! type archive) → void?)
-(define (record-variant! archive variant) → AgentArchive?)
-(define (get-variant-by-id archive id) → (or/c AgentVariant? #f))
-(define (get-best-variants archive task-family #:limit [limit 5]) → (listof AgentVariant?))
-
----
-
-### Harness Self-Optimization (Meta-Harness)
-
-The `src/llm/harness-evolve.rkt` module implements four capabilities that close the gap between Chrysalis Forge and systems like Meta-Harness (arxiv 2603.28052) and ShinkaEvolve (Sakana AI).
-
-#### Novelty Detection
-
-Prevents wasting LLM evaluations on trivially different mutations by measuring instruction similarity using Jaccard distance on character 3-grams.
-
-```racket
-(define archive (make-novelty-archive #:threshold 0.3))
-
-;; Check if a candidate is novel enough to evaluate
-(novel-enough? archive "New instruction text") ; → #t or #f
-
-;; Add evaluated instruction to the archive
-(novelty-archive-add! archive "Evaluated instruction text")
-
-;; Get novelty score (min distance to any archived instruction)
-(instruction-novelty-score archive "Some instruction") ; → 0.0 to 1.0
-```
-
-#### Bandit-Based Model Ensemble
-
-Thompson Sampling (Beta-Binomial conjugate prior) selects which model generates mutations during evolution, balancing exploration and exploitation.
-
-```racket
-(define bandit (make-model-bandit '("gpt-5.2" "claude-3" "gemini-2")))
-
-;; Sample a model (exploration/exploitation trade-off)
-(bandit-sample bandit) ; → "gpt-5.2" (probabilistic)
-
-;; Update after observing result
-(bandit-update! bandit "gpt-5.2" #t)  ; success
-(bandit-update! bandit "claude-3" #f) ; failure
-
-;; Get statistics
-(bandit-stats bandit)
-; → hash mapping model names to {mean, alpha, beta}
-```
-
-#### Cross-Model Generalization
-
-Validates that evolved configurations work across different models, not just the one used during evolution.
-
-```racket
-(define result
-  (test-cross-model-generalization
-    module ctx trainset
-    (list sender-gpt sender-claude sender-gemini)
-    score-fn
-    #:threshold 0.6))
-
-;; result is a generalization-result struct:
-;; - scores: list of per-model scores
-;; - mean-score: arithmetic mean
-;; - std-dev: standard deviation
-;; - passes?: whether mean >= threshold
-```
-
-#### Harness Strategy Evolution
-
-Evolves the harness's own decision-making parameters—not just prompts, but structural choices like context budget, execution strategy, and tool routing.
-
-```racket
-;; 12 evolvable fields
-(struct harness-strategy
-  (context-budget compaction-threshold strategy-type temperature top-p
-   tool-hint-weight prefer-tools? demo-count demo-selection
-   prefer-cheap-decomp? execution-priority mutation-rate))
-
-;; Mutate with given rate (0.0 = no change, 1.0 = all fields)
-(define mutated (mutate-harness-strategy default-harness-strategy 0.3))
-
-;; Serialize for storage
-(define h (harness-strategy->hash mutated))
-(define restored (hash->harness-strategy h))
-```
-
-#### Integrated Compiler
-
-`compile/evolve!` is a drop-in replacement for `compile!` that uses all four capabilities in a unified MAP-Elites loop:
-
-```racket
-(define archive
-  (compile/evolve! module ctx trainset send!
-    #:models '("gpt-5.2" "claude-3")    ; bandit selects among these
-    #:novelty-threshold 0.3              ; reject similar mutations
-    #:generalize-models held-out-senders ; test cross-model
-    #:evolve-strategy? #t))              ; also evolve harness strategy
-```
-
-The `evolve_harness` ACP tool exposes this capability to the agent at security level 2.
-
----
-
-## Sub-Agent Management
-
-The `src/core/sub-agent.rkt` module enables parallel task execution.
-
-### Tool Profiles
-
-Four profiles restrict tool access for sub-agents:
-
-```racket
-(define PROFILE-EDITOR
-  '("read_file" "write_file" "patch_file" "preview_diff" "list_dir"))
-
-(define PROFILE-RESEARCHER
-  '("read_file" "list_dir" "grep_code" "web_search" "web_fetch" "web_search_news"))
-
-(define PROFILE-VCS
-  '("git_status" "git_diff" "git_log" "git_commit" "git_checkout"
-    "jj_status" "jj_log" "jj_diff" "jj_undo" "jj_op_log" "jj_op_restore"
-    "jj_workspace_add" "jj_workspace_list" "jj_describe" "jj_new"))
-
-(define PROFILE-ALL #f)  ; No filtering
-```
-
-Get a profile by name:
-
-```racket
-(define (get-tool-profile name) → (or/c list? #f))
-```
-
-Filter tools:
-
-```racket
-(define (filter-tools-by-names all-tools allowed-names) → list?)
-```
-
-### Spawning and Awaiting
-
-Spawn a sub-agent:
-
-```racket
-(define (spawn-sub-agent! prompt run-fn 
-                          #:context [context ""] 
-                          #:profile [profile 'all]) → string?)
-```
-
-Returns a task ID. The `run-fn` is a function `(prompt context tools-filter) -> result` that executes the task.
-
-Wait for completion:
-
-```racket
-(define (await-sub-agent! id) → any/c)
-```
-
-Blocks until the sub-agent finishes, returns its result.
-
-Check status without blocking:
-
-```racket
-(define (sub-agent-status id) → hash?)
-```
-
-Returns a hash with `'status` (`'running`, `'done`, or `'error`), `'profile`, and optionally `'result`.
-
----
-
-## Extending with Custom Tools
-
-Tools are defined in `src/tools/acp-tools.rkt`. Adding a new tool involves two steps.
-
-### Step 1: Define the Schema
-
-Add to the list returned by `make-acp-tools`:
-
-```racket
-(hash 'type "function"
-      'function (hash 'name "my_custom_tool"
-                      'description "Does something useful with the input"
-                      'parameters (hash 'type "object"
-                                        'properties 
-                                        (hash 'input (hash 'type "string" 
-                                                           'description "The input to process")
-                                              'verbose (hash 'type "boolean"
-                                                             'description "Enable verbose output"))
-                                        'required '("input"))))
-```
-
-The schema uses JSON Schema format. Required parameters go in the `required` list.
-
-### Step 2: Implement the Handler
-
-Add a case to the `execute-acp-tool` match expression:
-
-```racket
-["my_custom_tool"
- (if (>= security-level 1)  ; Require at least level 1
-     (my-tool-implementation (hash-ref args 'input)
-                             (hash-ref args 'verbose #f))
-     "Permission Denied: Requires Level 1.")]
-```
-
-The security check is important—decide what level your tool requires and enforce it.
-
-### Example: A Code Metrics Tool
-
-Here's a complete example adding a tool that counts lines of code:
-
-```racket
-;; Schema (in make-acp-tools)
-(hash 'type "function"
-      'function (hash 'name "count_lines"
-                      'description "Count lines of code in a file"
-                      'parameters (hash 'type "object"
-                                        'properties 
-                                        (hash 'path (hash 'type "string" 
-                                                          'description "Path to file"))
-                                        'required '("path"))))
-
-;; Handler (in execute-acp-tool)
-["count_lines"
- (if (>= security-level 1)
-     (let ([content (file->string (hash-ref args 'path))])
-       (define lines (length (string-split content "\n")))
-       (define non-blank (length (filter (λ (s) (not (string=? (string-trim s) "")))
-                                         (string-split content "\n"))))
-       (format "Total lines: ~a\nNon-blank lines: ~a" lines non-blank))
-     "Permission Denied")]
+### Remaining Types
+
+```typescript
+interface SessionStats { startTime: number; turns: number; tokensIn: number; tokensOut: number; totalCost: number; filesWritten: string[]; filesRead: string[]; toolsUsed: Record<string, number>; }
+interface RollbackEntry { timestamp: number; backupPath: string; }
+interface TraceRecord { ts: number; task: string; final: string; tokens: Record<string, number>; cost: number; toolResults: unknown[]; }
+interface CacheEntry { value: string; createdAt: number; ttl: number; tags: string[]; }
+interface CacheStats { total: number; valid: number; expired: number; tags: Record<string, number>; }
+interface VectorEntry { text: string; vec: number[]; }
+interface ProfileState { activeProfile: ChrysalisProfile; updatedAt: string; reason?: string; }
+interface StoreSpec { name: string; namespace: string; kind: StoreKind; description: string; createdAt: number; updatedAt: number; }
+interface StoreRegistryDB { stores: Record<string, StoreSpec>; }
+interface ChrysalisConfig { pi: { runtimePreference: PiRuntimePreference; defaultProvider?: string; defaultModel?: string; defaultThinking?: string; tools: string[] }; profiles: { default: ChrysalisProfile }; artifacts: { root: string }; }
 ```
 
 ---
 
-## Creating Custom Modules
+## Core
 
-Beyond using the built-in modules, you can create specialized ones for your domain.
+### Evolution — `ts/core/evolution.ts`
 
-### Basic Custom Module
+#### Novelty & Phenotype Utilities (sync)
 
-```racket
-(require "src/llm/dspy-core.rkt")
-
-;; Define the signature
-(define CodeReviewSig
-  (signature CodeReview
-    (in [code string?] [language string?])
-    (out [issues string?] [severity string?] [suggestions string?])))
-
-;; Create the module
-(define code-reviewer
-  (ChainOfThought CodeReviewSig
-    #:instructions "Review the provided code for bugs, security issues, and style problems.
-Think through each aspect systematically before providing your assessment."
-    #:demos (list 
-             (hash 'code "def foo(x): return x+1"
-                   'language "python"
-                   'issues "No input validation, no docstring"
-                   'severity "low"
-                   'suggestions "Add type hints and docstring"))))
+```typescript
+function instructionNgrams(text: string, n?: number): Set<string>
+function instructionNoveltyScore(existing: string[], candidate: string): number
+function novelEnough(existing: string[], candidate: string, threshold?: number): boolean
+function phenotypeDistance(left: Phenotype, right: Phenotype): number
+function normalizePhenotype(pheno: Phenotype, mins: number[], maxs: number[]): Phenotype
+function selectEliteEntry(entries: ArchiveEntry[], target: Phenotype): ArchiveEntry | null
 ```
 
-### Using Custom Modules
+#### State Management (async)
 
-```racket
-(define ctx (ctx #:system "You are a code review expert." #:priority 'best))
-
-(define result 
-  (run-module code-reviewer ctx 
-              (hash 'code "function add(a,b) { return a + b }"
-                    'language "javascript")
-              send!))
-
-(when (RunResult-ok? result)
-  (displayln (hash-ref (RunResult-outputs result) 'issues)))
+```typescript
+async function loadEvolutionState(cwd: string): Promise<EvolutionState>
+async function saveEvolutionState(cwd: string, state: EvolutionState): Promise<EvolutionState>
+async function loadEffectiveSystemPrompt(cwd: string): Promise<string>
+async function loadEffectiveMetaPrompt(cwd: string): Promise<string>
 ```
 
-### Compiling Custom Modules
+#### Evolution Operations (async)
 
-To create an archive with optimized variants:
+```typescript
+async function evolveSystemPrompt(cwd: string, feedback: string, currentProfile: ChrysalisProfile): Promise<{ state: EvolutionState; entry: ArchiveEntry; noveltyScore: number; rejected?: boolean }>
+async function evolveMetaPrompt(cwd: string, feedback: string, currentProfile: ChrysalisProfile): Promise<{ state: EvolutionState; entry: ArchiveEntry; noveltyScore: number }>
+async function evolveHarnessStrategy(cwd: string, feedback: string, currentProfile: ChrysalisProfile): Promise<{ state: EvolutionState; harness: HarnessStrategy }>
+```
 
-```racket
-(require "src/llm/dspy-compile.rkt")
+#### Autonomous Evolution (async)
 
-(define trainset
-  (list (hash 'inputs (hash 'code "..." 'language "python")
-              'expected (hash 'issues "..." 'severity "..." 'suggestions "..."))
-        ;; more examples...
-        ))
+```typescript
+async function runAutonomousEvolution(cwd: string, trigger: AutonomousEvolutionTrigger): Promise<AutonomousEvolutionReport>
+```
 
-(define reviewer-archive
-  (compile! code-reviewer ctx trainset send!
-            #:k-demos 3    ; few-shot examples
-            #:n-inst 5     ; instruction mutations per generation
-            #:iters 3))    ; evolution generations
+Respects cooldown (6h for `session_start`, 1h otherwise) unless `trigger.force` is `true`.
 
-;; Now use the archive for priority-aware execution
-(define result (run-module reviewer-archive ctx inputs send!))
+#### Archive & Evaluation (async)
+
+```typescript
+async function loadEvolutionArchive(cwd: string): Promise<ArchiveEntry[]>
+async function listEvolutionBins(cwd: string): Promise<Record<string, ArchiveEntry>>
+async function recordEvolutionEvaluation(cwd: string, record: EvaluationRecord): Promise<void>
+async function suggestProfileFromStats(cwd: string, taskType: string): Promise<{ profile: ChrysalisProfile; score: number }>
+```
+
+#### Summary & Bootstrap (async)
+
+```typescript
+function summarizeEvolutionState(state: EvolutionState): string[]
+function chooseExecutionModel(state: EvolutionState): string
+async function ensureEvolutionBootstrap(cwd: string): Promise<EvolutionState>
+async function loadEvolutionSummary(cwd: string): Promise<{ state: EvolutionState; archive: ArchiveEntry[]; bins: Record<string, ArchiveEntry>; profileStats: Record<string, ProfileStatsEntry> }>
 ```
 
 ---
 
-## Integration Patterns
+### Decomposition Planner — `ts/core/decomp-planner.ts`
 
-### Embedding in Larger Systems
-
-To use Chrysalis Forge as a library:
-
-```racket
-#lang racket
-
-(require chrysalis-forge/llm/dspy-core
-         chrysalis-forge/llm/openai-client
-         chrysalis-forge/stores/context-store)
-
-;; Create a sender function
-(define send! (make-openai-sender #:model "gpt-5.2"))
-
-;; Load or create context
-(define ctx (or (ctx-get-active)
-                (ctx #:system "You are a helpful assistant.")))
-
-;; Define and run a module
-(define result (run-module my-module ctx inputs send!))
+```typescript
+function classifyTask(taskDescription: string): string
+function suggestProfileForSubtask(description: string): ToolProfile
+async function decomposeTaskLLM(task: string, cwd: string, maxSubtasks?: number): Promise<SubtaskDefinition[]>
+function heuristicDecomposition(task: string, maxSubtasks?: number): SubtaskDefinition[]
+async function runDecomposition(cwd: string, task: string, taskType: ChrysalisTaskType | string): Promise<{ subtasks: SubtaskDefinition[]; patternId: string }>
+function shouldVote(task: string): boolean
 ```
 
-### Custom Scoring Functions
+### Decomposition Voter — `ts/core/decomp-voter.ts`
 
-The default scoring balances accuracy, latency, and cost. For domain-specific needs, implement custom scoring:
+```typescript
+const STAKES_PRESETS: Record<string, VotingConfig>
+// NONE: 0v/0k/0ms  LOW: 3v/2k/5s  MEDIUM: 5v/3k/10s  HIGH: 7v/5k/15s  CRITICAL: 9v/7k/20s
 
-```racket
-(define (domain-score expected rr)
-  (define outputs (RunResult-outputs rr))
-  (define meta (RunResult-meta rr))
-  
-  ;; Domain-specific accuracy (e.g., medical diagnosis)
-  (define accuracy 
-    (if (critical-match? expected outputs) 10.0
-        (if (partial-match? expected outputs) 5.0 0.0)))
-  
-  ;; Heavy penalty for false positives in critical domains
-  (define fp-penalty
-    (if (false-positive? expected outputs) 5.0 0.0))
-  
-  ;; Light weight on cost for critical applications
-  (define cost-factor 0.1)
-  (define cost-penalty (* cost-factor (hash-ref meta 'cost 0)))
-  
-  (max 0.0 (- accuracy fp-penalty cost-penalty)))
+function tallyVotes<T extends string>(votes: T[], config: VotingConfig): VotingResult<T>
+function decorrelatePrompt(base: string, index: number, total: number): string
+function selectStakes(taskDescription: string): keyof typeof STAKES_PRESETS
+async function executeWithVoting<T extends string>(task: string, executeVote: (prompt: string, index: number) => Promise<T>, config?: VotingConfig): Promise<VotingResult<T>>
 ```
 
-### Programmatic Evolution
+### Decomposition Selector — `ts/core/decomp-selector.ts`
 
-Trigger evolution programmatically based on automated feedback:
-
-```racket
-(define (auto-evolve-from-failures failed-cases)
-  (define feedback 
-    (format "The system failed on these cases:\n~a\nPlease improve handling of these patterns."
-            (string-join (map describe-failure failed-cases) "\n")))
-  (gepa-evolve! feedback))
-
-;; In a test harness:
-(define failures (filter (λ (tc) (not (RunResult-ok? (run-test tc)))) test-cases))
-(when (> (length failures) 5)
-  (auto-evolve-from-failures failures))
+```typescript
+function priorityToPhenotype(priority: ChrysalisProfile): DecompPhenotype
+function computeDecompPhenotype(pattern: DecompositionPattern): DecompPhenotype
+function selectPatternForPhenotype(archive: DecompositionArchive, target: DecompPhenotype): DecompositionPattern | null
+function selectPatternForPriority(archive: DecompositionArchive, priority: ChrysalisProfile): DecompositionPattern | null
+async function selectOrDecompose(cwd: string, taskType: string, priority: ChrysalisProfile): Promise<{ pattern: DecompositionPattern | null; source: "archive" | "fallback" }>
 ```
 
-This pattern enables continuous improvement: as failures accumulate, the system evolves to address them.
+### Decomposition Archive — `ts/core/stores/decomp-archive.ts`
+
+```typescript
+async function loadArchive(cwd: string, taskType: string): Promise<DecompositionArchive>
+async function saveArchive(cwd: string, arch: DecompositionArchive): Promise<void>
+async function listArchives(cwd: string): Promise<string[]>
+function recordPattern(archive: DecompositionArchive, pattern: DecompositionPattern, score: number): DecompositionArchive
+function pruneArchive(archive: DecompositionArchive, maxCloudSize?: number): DecompositionArchive
+function archiveStats(archive: DecompositionArchive): { totalPatterns: number; binsFilled: number; avgScore: number; bestPatternId: string | null }
+```
+
+### Priority — `ts/core/priority.ts`
+
+```typescript
+function interpretProfilePhrase(input: string): { profile: ChrysalisProfile; reason: string }
+```
+
+### Task Planner — `ts/core/ax.ts`
+
+```typescript
+async function createTaskPlan(task: string, cwd: string, currentProfile: ChrysalisProfile): Promise<TaskPlan>
+```
+
+### Utilities — `ts/core/util.ts`
+
+```typescript
+function slugify(value: string): string
+function dedupe(items: string[]): string[]
+```
 
 ---
 
-## Web Search Tools
+## Stores
 
-The `src/tools/web-search.rkt` module provides web search and content fetching capabilities.
+### Context Store — `ts/core/stores/context-store.ts`
 
-### Tool Definitions
-
-```racket
-(define (make-web-search-tools) → list?)
+```typescript
+async function sessionCreate(cwd: string, name: string, opts?: { mode?: "ask" | "code"; id?: string; title?: string }): Promise<SessionDB>
+async function sessionSwitch(cwd: string, name: string): Promise<SessionDB>
+async function sessionList(cwd: string): Promise<{ names: string[]; active: string }>
+async function sessionDelete(cwd: string, name: string): Promise<SessionDB>
+async function sessionGetActive(cwd: string): Promise<SessionContext>
+async function sessionGetLast(cwd: string): Promise<string | null>
 ```
 
-Returns a list of tool definitions for web search functionality.
+### Thread Store — `ts/core/stores/thread-store.ts`
 
-### Dispatcher
-
-```racket
-(define (execute-web-search tool-name args) → string?)
+```typescript
+async function threadCreate(cwd: string, title: string, project?: string): Promise<string>
+async function threadFind(cwd: string, id: string): Promise<ThreadData | null>
+async function threadList(cwd: string, opts?: { project?: string; status?: string; limit?: number }): Promise<ThreadData[]>
+async function threadUpdate(cwd: string, id: string, updates: Partial<Pick<ThreadData, "title" | "status" | "summary">>): Promise<void>
+async function threadGetActive(cwd: string): Promise<string | null>
+async function threadSetActive(cwd: string, id: string): Promise<void>
+async function threadSwitch(cwd: string, id: string): Promise<void>
+async function threadContinue(cwd: string, fromId: string, title?: string): Promise<string>
+async function threadSpawnChild(cwd: string, parentId: string, title: string): Promise<string>
+async function contextCreate(cwd: string, threadId: string, title: string, opts?: { parentId?: string; kind?: string; body?: string }): Promise<string>
+async function contextList(cwd: string, threadId: string): Promise<ContextNode[]>
+async function contextTree(cwd: string, threadId: string): Promise<ContextNode[]>
 ```
 
-Dispatches to the appropriate web search tool based on `tool-name`.
+### Eval Store — `ts/core/stores/eval-store.ts`
 
-### Available Tools
+```typescript
+async function logEval(cwd: string, record: Omit<EvalRecord, "ts">): Promise<void>
+async function getProfileStats(cwd: string, profile?: string): Promise<EvalProfileStats | Record<string, EvalProfileStats>>
+async function suggestProfile(cwd: string, taskType: string): Promise<{ profile: string; rate: number }>
+async function evolveProfile(cwd: string, profileName: string, threshold?: number): Promise<{ profile: string; successRate: number; recommendedTools: string[]; evaluation: "stable" | "needs_improvement" }>
+```
 
-**`web_search`** — Semantic web search using Exa AI. Falls back to DuckDuckGo via curl when no API key is configured.
+### Trace Store — `ts/core/stores/trace-store.ts`
 
-**`web_fetch`** — Fetch and extract content from a URL.
+```typescript
+async function logTrace(cwd: string, record: Omit<TraceRecord, "ts">): Promise<void>
+```
 
-**`web_search_news`** — Date-filtered news search for recent events.
+### Cache Store — `ts/core/stores/cache-store.ts`
 
-### Environment
+```typescript
+async function cacheGet(cwd: string, key: string, ignoreTtl?: boolean): Promise<string | null>
+async function cacheSet(cwd: string, key: string, value: string, ttl?: number, tags?: string[]): Promise<string>
+async function cacheInvalidate(cwd: string, key: string): Promise<string>
+async function cacheInvalidateByTag(cwd: string, tag: string): Promise<string>
+async function cacheCleanup(cwd: string): Promise<string>
+async function cacheStats(cwd: string): Promise<CacheStats>
+```
 
-Set `EXA_API_KEY` for Exa AI semantic search. When the key is not set, searches fall back to DuckDuckGo via curl, which provides basic keyword matching but lacks semantic understanding.
+### Rollback Store — `ts/core/stores/rollback-store.ts`
+
+```typescript
+async function fileBackup(cwd: string, path: string, maxRollbacks?: number): Promise<string | null>
+async function fileRollback(cwd: string, path: string, steps?: number): Promise<{ ok: boolean; message: string }>
+async function fileRollbackList(cwd: string, path: string): Promise<Array<{ step: number; timestamp: number; backupPath: string; size: number }>>
+```
+
+### Session Stats — `ts/core/stores/session-stats.ts`
+
+```typescript
+async function loadSessionStats(cwd: string): Promise<SessionStats>
+async function addTurn(cwd: string, opts: { tokensIn?: number; tokensOut?: number; cost?: number }): Promise<SessionStats>
+async function recordToolUse(cwd: string, toolName: string): Promise<SessionStats>
+async function recordFileOp(cwd: string, path: string, mode: "write" | "read"): Promise<SessionStats>
+function getSessionStatsDisplay(stats: SessionStats): Record<string, string | number>
+```
+
+### Vector Store — `ts/core/stores/vector-store.ts`
+
+```typescript
+async function vectorAdd(cwd: string, text: string, vec: number[]): Promise<string>
+async function vectorSearch(cwd: string, queryVec: number[], topK?: number): Promise<Array<{ score: number; text: string }>>
+function cosineSimilarity(a: number[], b: number[]): number
+```
+
+### RDF Store — `ts/core/stores/rdf-store.ts`
+
+```typescript
+async function rdfLoad(cwd: string, path: string, graphId: string): Promise<string>
+async function rdfQuery(cwd: string, query: string, graphId?: string): Promise<string>
+async function rdfInsert(cwd: string, subject: string, predicate: string, object: string, graph?: string, timestamp?: number): Promise<string>
+```
+
+### Store Registry — `ts/core/stores/store-registry.ts`
+
+```typescript
+async function storeCreate(cwd: string, name: string, kind: StoreKind, opts?: { namespace?: string; description?: string }): Promise<StoreSpec>
+async function storeDelete(cwd: string, name: string, namespace?: string): Promise<string>
+async function storeList(cwd: string, opts?: { namespace?: string; kind?: StoreKind }): Promise<StoreSpec[]>
+async function storeGet(cwd: string, name: string, field: string, namespace?: string): Promise<string>
+async function storeSet(cwd: string, name: string, field: string, value: string, namespace?: string): Promise<string>
+async function storeRemove(cwd: string, name: string, field: string, namespace?: string): Promise<string>
+async function storeDump(cwd: string, name: string, namespace?: string): Promise<string>
+async function storeDescribe(cwd: string): Promise<string>
+```
 
 ---
 
-## MCP Client
+## Tools — `ts/core/tools/rdf-tools.ts`
 
-The `src/tools/mcp-client.rkt` module implements a Model Context Protocol client for connecting to external tool servers.
+```typescript
+const RDF_TOOL_DEFINITIONS: Array<{ name: string; description: string; parameters: object }>
+// Three tools: "rdf_load", "rdf_query", "rdf_insert"
 
-### Struct
-
-```racket
-(struct mcp-client (name process stdin stdout stderr tools) #:transparent)
+async function executeRdfTool(cwd: string, name: string, args: Record<string, unknown>): Promise<string>
 ```
-
-Represents a connection to an MCP server, including the subprocess handles and discovered tools.
-
-### API
-
-**Connect to an MCP server:**
-
-```racket
-(define (mcp-connect name command args) → mcp-client?)
-```
-
-Spawns the MCP server process and performs the initialization handshake. Returns a client struct with available tools populated.
-
-**Disconnect:**
-
-```racket
-(define (mcp-disconnect client) → void?)
-```
-
-Terminates the MCP server process and cleans up resources.
-
-**List available tools:**
-
-```racket
-(define (mcp-list-tools client) → list?)
-```
-
-Returns the list of tools available from the connected server.
-
-**Call a tool:**
-
-```racket
-(define (mcp-call-tool client tool-name args) → any/c)
-```
-
-Invokes a tool on the MCP server with the given arguments. Returns the tool's result.
-
-**Session statistics:**
-
-```racket
-(define (mcp-get-session-stats) → hash?)
-```
-
-Returns connection and call statistics for the current session.
-
-```racket
-(define (mcp-reset-session-stats!) → void?)
-```
-
-Resets session statistics counters.
 
 ---
 
-## Model Registry
+## Project — `ts/core/project.ts`
 
-The `src/llm/model-registry.rkt` module provides dynamic model discovery and capability tracking.
-
-### Structs
-
-```racket
-(struct ModelCapabilities 
-  (id provider max-context reasoning coding speed cost-tier 
-   supports-tools? supports-vision? best-for description) 
-  #:transparent)
+```typescript
+async function ensureProjectScaffold(cwd: string): Promise<void>
+async function loadProfileState(cwd: string): Promise<ProfileState>
+async function saveProfileState(cwd: string, activeProfile: ChrysalisProfile, reason: string): Promise<ProfileState>
+async function writeTaskPlanArtifact(cwd: string, task: string): Promise<{ planPath: string; plan: TaskPlan }>
+async function listArtifacts(cwd: string): Promise<Array<{ label: string; path: string }>>
 ```
-
-Static capabilities of a model: context window, strengths, tool/vision support.
-
-```racket
-(struct ModelStats 
-  (total-calls success-calls total-ms total-cost-usd 
-   by-task-type by-profile last-used) 
-  #:transparent)
-```
-
-Runtime performance statistics tracked per model.
-
-```racket
-(struct ModelRecord (caps stats available? disabled?) #:transparent)
-```
-
-Combines capabilities with stats and availability flags.
-
-### API
-
-**Initialize the registry:**
-
-```racket
-(define (init-model-registry! #:api-key key #:api-base base) → void?)
-```
-
-Initializes the registry by fetching available models from the configured endpoint.
-
-**Fetch models from endpoint:**
-
-```racket
-(define (fetch-models-from-endpoint base-url api-key) → list?)
-```
-
-Queries an OpenAI-compatible `/models` endpoint and returns model information.
-
-**Register a model:**
-
-```racket
-(define (register-model! caps) → void?)
-```
-
-Manually registers a model with known capabilities.
-
-**List available models:**
-
-```racket
-(define (list-available-models) → list?)
-```
-
-Returns all models currently marked as available.
-
-**Get a specific model:**
-
-```racket
-(define (get-model id) → (or/c ModelRecord? #f))
-```
-
-Returns the model record for the given ID, or `#f` if not found.
-
-**Update performance stats:**
-
-```racket
-(define (update-model-stats! id 
-                             #:success? success? 
-                             #:elapsed-ms ms 
-                             #:cost-usd cost 
-                             #:task-type task-type 
-                             #:profile profile) → void?)
-```
-
-Records execution statistics for a model call.
-
-### Provider Detection
-
-The registry automatically detects providers (OpenAI, Anthropic, OpenRouter, Groq, Together, Backboard) from base URLs and model ID prefixes. Capability inference examines model IDs to assign reasonable defaults for context limits, tool support, and cost tiers.
 
 ---
 
-## Thread Manager and Hierarchical Context
+## Config — `ts/core/config.ts`
 
-The thread and project system provides a user-facing abstraction over low-level sessions, giving you durable conversation IDs and structured context.
-
-### Core Thread Manager
-
-The `src/core/thread-manager.rkt` module is responsible for mapping user actions into sessions and database records.
-
-High-level responsibilities:
-
-- **Hide sessions** behind stable **threads**
-- **Rotate sessions** transparently while preserving context
-- Maintain **hierarchical context nodes** inside each thread
-- Track **relations between threads** (`continues_from`, `child_of`, `relates_to`)
-
-Key functions (see `src/core/agents.md` for more detailed examples):
-
-- `ensure-thread` — Get or create a thread for a user (optionally scoped to a project)
-- `thread-continue` — Create a follow-up thread that continues an earlier one
-- `thread-spawn-child` — Create a child thread for subtopics or decomposed work
-- `thread-link!` — Create relations between existing threads
-- `get-or-create-session` — Internal helper for attaching sessions to threads
-- `rotate-session!` — Archive old sessions and start a fresh one when needed
-- `thread-chat-prepare` — Main entry point for preparing a chat turn on a thread
-
-Typical usage:
-
-```racket
-(require "src/core/thread-manager.rkt")
-
-;; Prepare for a chat turn on a thread
-(define prep
-  (thread-chat-prepare user-id prompt
-                       #:thread-id thread-id
-                       #:project-id project-id
-                       #:mode "code"
-                       #:context-node-id context-node-id))
-
-;; Use (hash-ref prep 'session_id) when calling the LLM
-;; After responding, check if rotation is needed and finalize:
-;; (when (hash-ref prep 'rotation_needed)
-;;   (thread-chat-finalize! user-id thread-id reason summarize-fn))
+```typescript
+const DEFAULT_CONFIG: ChrysalisConfig
+function configPath(cwd: string): string
+async function loadConfig(cwd: string): Promise<ChrysalisConfig>
+async function ensureConfig(cwd: string): Promise<void>
+function mergePiDefaults(config: ChrysalisConfig, args: string[]): string[]
 ```
-
-### Database Layer: Projects, Threads, Context
-
-The `src/service/db.rkt` module implements storage for projects, threads, relations, and context nodes on top of the schema in `src/service/schema.sql` (migration v2).
-
-Project operations:
-
-- `project-create!` — Create a project with optional org, slug, description, and JSON `settings`
-- `project-find-by-id` — Load a single project (decoding JSON settings into a hash)
-- `project-list-for-user` — List visible projects for a user or organization
-- `project-update!` — Update project name, description, or settings
-
-Thread operations:
-
-- `thread-create!` — Create a thread for a user (optionally linked to org/project)
-- `thread-find-by-id` — Load a thread, including JSON `metadata`
-- `thread-list-for-user` — List threads with optional project/status filters
-- `thread-update!` — Update title, status, summary, or metadata
-- `thread-touch!` — Bump `updated_at` when activity occurs
-
-Relations and context:
-
-- `thread-relation-create!`, `thread-relations-for-thread`, `thread-get-parent`, `thread-get-children`
-- `thread-context-create!`, `thread-context-find-by-id`, `thread-context-list`, `thread-context-tree`, `thread-context-update!`
-
-These functions are used by the HTTP router (`src/service/api-router.rkt`) to implement the `/v1/projects`, `/v1/threads`, and related endpoints documented in `doc/SERVICE.md`.
 
 ---
 
-## Workflow Engine
+## Paths — `ts/core/paths.ts`
 
-The `src/core/workflow-engine.rkt` module provides stored workflow templates for common tasks.
+| Function | Path |
+|----------|------|
+| `artifactRoot(cwd)` | `<cwd>/.chrysalis` |
+| `outputsDir(cwd)` | `.chrysalis/outputs` |
+| `sessionsDir(cwd)` | `.chrysalis/sessions` |
+| `stateDir(cwd)` | `.chrysalis/state` |
+| `evolutionDir(cwd)` | `.chrysalis/state/evolution` |
+| `evolutionStatePath(cwd)` | `.chrysalis/state/evolution/state.json` |
+| `evolutionArchivePath(cwd)` | `.chrysalis/state/evolution/archive.json` |
+| `evolutionEvalPath(cwd)` | `.chrysalis/state/evolution/evals.jsonl` |
+| `evolutionSystemPromptPath(cwd)` | `.chrysalis/state/evolution/system-prompt.md` |
+| `evolutionMetaPromptPath(cwd)` | `.chrysalis/state/evolution/meta-prompt.md` |
+| `rdfDbPath(cwd)` | `.chrysalis/state/rdf/graph.db` |
+| `threadStorePath(cwd)` | `.chrysalis/state/threads.json` |
+| `contextStorePath(cwd)` | `.chrysalis/state/context.json` |
+| `traceStorePath(cwd)` | `.chrysalis/state/traces.jsonl` |
+| `cacheStorePath(cwd)` | `.chrysalis/state/web-cache.json` |
+| `evalStorePath(cwd)` | `.chrysalis/state/evals.jsonl` |
+| `vectorStorePath(cwd)` | `.chrysalis/state/vectors.json` |
+| `sessionStatsPath(cwd)` | `.chrysalis/state/session-stats.json` |
+| `storeRegistryPath(cwd)` | `.chrysalis/state/store-registry.json` |
 
-### API
-
-**List workflows:**
-
-```racket
-(define (workflow-list) → list?)
+```typescript
+async function ensureChrysalisDirs(cwd: string, rootName?: string): Promise<void>
 ```
 
-Returns all stored workflow slugs and descriptions.
+---
 
-**Get a workflow:**
+## Environment Variables
 
-```racket
-(define (workflow-get slug) → (or/c string? #f))
-```
+| Variable | Provider | Default Model |
+|----------|----------|---------------|
+| `OPENAI_API_KEY` | OpenAI | `gpt-5.4` (or `OPENAI_MODEL` / `MODEL`) |
+| `ANTHROPIC_API_KEY` | Anthropic | `claude-sonnet-4-0` (or `ANTHROPIC_MODEL`) |
+| `GEMINI_API_KEY` | Google Gemini | `gemini-2.5-pro` (or `GEMINI_MODEL`) |
 
-Returns the workflow content for the given slug, or `#f` if not found.
-
-**Create or update a workflow:**
-
-```racket
-(define (workflow-set slug description content) → void?)
-```
-
-Stores a workflow template with the given slug, description, and content. Overwrites if the slug already exists.
-
-**Delete a workflow:**
-
-```racket
-(define (workflow-delete slug) → void?)
-```
-
-Removes the workflow with the given slug.
-
-### Default Workflows
-
-The engine includes built-in workflows:
-
-- **commit-msg** — Generate commit messages from staged changes
-- **pr-desc** — Generate pull request descriptions
-- **review** — Code review workflow
-- **naming** — Suggest names for functions, variables, types
-
-### Storage
-
-Workflows are persisted in `~/.chrysalis/graph.db` in the `workflows` table.
+Provider selection order: OpenAI → Anthropic → Google Gemini. Custom base URLs via `OPENAI_BASE_URL` / `OPENAI_API_BASE`.

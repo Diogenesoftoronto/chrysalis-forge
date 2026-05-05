@@ -1,25 +1,25 @@
-import { useStyletron } from "baseui";
-import { Card } from "baseui/card";
-import { HeadingLarge, ParagraphSmall } from "baseui/typography";
-import { MarkdownBody } from "../components/MarkdownBody";
+import ReactMarkdown from "react-markdown";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { prompts } from "../lib/piContent";
 
 export default function Prompts() {
-  const [css, theme] = useStyletron();
   return (
-    <div className={css({ display: "flex", flexDirection: "column", gap: theme.sizing.scale600 })}>
+    <div className="space-y-6">
       <header>
-        <HeadingLarge marginTop={0} marginBottom={theme.sizing.scale300}>
-          Task prompts
-        </HeadingLarge>
-        <ParagraphSmall marginTop={0} marginBottom={0} className={css({ color: theme.colors.contentSecondary })}>
-          Source of truth lives in <code className={css({ color: theme.colors.accent })}>pi/prompts/</code>.
-        </ParagraphSmall>
+        <h1 className="text-3xl font-bold tracking-tight">Task prompts</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Source of truth lives in <code className="text-primary">pi/prompts/</code>.
+        </p>
       </header>
-      <div className={css({ display: "flex", flexDirection: "column", gap: theme.sizing.scale500 })}>
+      <div className="space-y-4">
         {prompts.map((p) => (
-          <Card key={p.id} overrides={{}} title={p.title}>
-            <MarkdownBody>{p.body}</MarkdownBody>
+          <Card key={p.id}>
+            <CardHeader>
+              <CardTitle>{p.title}</CardTitle>
+            </CardHeader>
+            <CardContent className="prose prose-invert max-w-none text-sm text-muted-foreground">
+              <ReactMarkdown>{p.body}</ReactMarkdown>
+            </CardContent>
           </Card>
         ))}
       </div>

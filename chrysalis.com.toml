@@ -1,5 +1,5 @@
 # Schema defined in agent_schema.py
-# Chrysalis Forge - Evolvable Racket Agent Framework
+# Chrysalis Forge - Evolvable TypeScript Agent Framework
 
 identity = "chrysalis-forge.chrysalis"
 name = "Chrysalis Forge (chrysalis)"
@@ -11,14 +11,14 @@ author_url = "https://github.com/diogenes"
 publisher_name = "Diogenes"
 publisher_url = "https://github.com/diogenes"
 type = "coding"
-description = "Self-evolving Racket agent with MAP-Elites optimization, natural language priority selection, and tiered security sandboxing."
-tags = ["racket", "self-evolving", "map-elites", "dspy", "agentic"]
-run_command."*" = "/home/diogenes/.local/share/racket/9.0/bin/chrysalis --acp"
+description = "Self-evolving TypeScript agent with MAP-Elites optimization, natural language priority selection, and tiered security sandboxing."
+tags = ["typescript", "self-evolving", "map-elites", "dspy", "agentic"]
+run_command."*" = "npx chrysalis --acp"
 
 help = '''
 # Chrysalis Forge (chrysalis)
 
-An evolvable, safety-gated Racket agent framework with DSPy-style optimization and self-improving capabilities.
+An evolvable, safety-gated TypeScript agent framework with DSPy-style optimization and self-improving capabilities.
 
 ## Key Features
 
@@ -31,7 +31,7 @@ An evolvable, safety-gated Racket agent framework with DSPy-style optimization a
 
 ## Prerequisites
 
-- Racket v9.0+ (ensure `/usr/local/racket/bin` is in PATH)
+- Node.js v20+
 - OpenAI API Key (`OPENAI_API_KEY` environment variable)
 - Optional: `EXA_API_KEY` for enhanced web search
 
@@ -39,7 +39,7 @@ An evolvable, safety-gated Racket agent framework with DSPy-style optimization a
 
 ```bash
 # Interactive mode
-chrysalis -i
+chrysalis shell
 
 # CLI with natural language priority
 chrysalis --priority "cheap and fast" "Summarize this file"
@@ -55,7 +55,7 @@ chrysalis --perms god "Full access mode"
 '''
 
 [actions."*".install]
-command = "git clone https://github.com/diogenes/chrysalis-forge.git && cd chrysalis-forge && raco pkg install --auto"
+command = "git clone https://github.com/diogenes/chrysalis-forge.git && cd chrysalis-forge && npm install && npm run build"
 description = "Clone and install Chrysalis Forge"
 
 [actions."*".setup_env]
@@ -63,7 +63,7 @@ command = "cp .env.example .env && echo 'Edit .env to add your OPENAI_API_KEY'"
 description = "Create environment file from template"
 
 [actions."*".interactive]
-command = "chrysalis -i"
+command = "chrysalis shell"
 description = "Start interactive REPL mode"
 
 [actions."*".init_project]

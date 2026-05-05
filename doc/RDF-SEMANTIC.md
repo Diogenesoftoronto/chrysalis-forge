@@ -1,308 +1,325 @@
-# Semantic Memory & Knowledge Graphs
+# RDF & Semantic Memory
 
-Chrysalis Forge provides two complementary memory systems for agent cognition:
+Chrysalis Forge provides two complementary knowledge stores for agents: a **Vector Store** for semantic similarity search and an **RDF Store** for structured triple/quad knowledge graphs. Both are JSON-backed, zero-dependency, and store data under `.chrysalis/state/`.
 
-1. **Vector Store** — Fuzzy semantic search using embeddings
-2. **RDF Store** — Structured knowledge graphs with temporal queries
-
-Together, these enable agents to maintain both associative memory (finding similar concepts) and factual knowledge (precise relationship queries).
+These stores give agents long-term memory that persists across sessions — the vector store finds semantically similar passages, while the RDF store answers structured queries about entities and their relationships.
 
 ---
 
 ## Vector Store
 
-The vector store (`src/stores/vector-store.rkt`) provides semantic similarity search using OpenAI embeddings.
+The vector store enables semantic search over embedded text. You add text with its embedding vector, then query with a new vector to find the closest matches by cosine similarity.
 
-### How It Works
-
-1. Text is converted to a 1536-dimensional vector using `text-embedding-3-small`
-2. Vectors are stored with their source text
-3. Queries are embedded and compared using cosine similarity
-4. Top-k most similar results are returned
+**Source:** `ts/core/stores/vector-store.ts`
 
 ### API
 
-```racket
-(require "src/stores/vector-store.rkt")
-
-;; Add text to the vector store
-(vector-add! "The authentication module uses JWT tokens for session management."
-             api-key
-             "https://api.openai.com/v1")
-; → "Stored."
-
-;; Search for similar content
-(vector-search "How does login work?" api-key)
-; → '((0.87 . "The authentication module uses JWT tokens...")
-;     (0.72 . "Users can login with email and password...")
-;     (0.65 . "Session tokens expire after 24 hours..."))
+```typescript
+import { vectorAdd, vectorSearch, cosineSimilarity } from "./core/stores/vector-store.js";
 ```
 
-### Parameters
+#### `vectorAdd(cwd, text, vec): Promise<string>`
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `text` | string | required | Text to store or query |
-| `key` | string | required | OpenAI API key |
-| `base` | string | `"https://api.openai.com/v1"` | API base URL |
-| `top-k` | number | 3 | Number of results to return |
+Add a text entry with its embedding vector. Returns a unique ID.
 
-### Storage
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cwd` | `string` | Project root directory |
+| `text` | `string` | The text to store |
+| `vec` | `number[]` | Embedding vector for the text |
 
-Vectors persist to `~/.chrysalis/vectors.json` as a hash mapping IDs to `{text, vec}` pairs.
+Returns: a generated ID string like `"1710000000-a1b2c3"`.
 
-### Use Cases
+```typescript
+const id = await vectorAdd(
+  projectDir,
+  "GEPA uses reflective prompt evolution to outperform RL",
+  [0.12, -0.34, 0.56, ...]
+);
+```
 
-- **Fuzzy Memory**: "What did we discuss about caching?"
-- **Code Search**: Find similar implementations
-- **Documentation Retrieval**: Find relevant docs for a question
-- **Deduplication**: Detect near-duplicate content
+#### `vectorSearch(cwd, queryVec, topK?): Promise<Array<{ score: number; text: string }>>`
+
+Search for entries similar to the query vector. Returns results sorted by cosine similarity, highest first.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cwd` | `string` | Project root directory |
+| `queryVec` | `number[]` | Query embedding vector |
+| `topK` | `number` | Maximum results (default: `3`) |
+
+```typescript
+const results = await vectorSearch(projectDir, [0.11, -0.30, 0.52, ...], 5);
+// => [{ score: 0.94, text: "GEPA uses reflective..." }, ...]
+```
+
+#### `cosineSimilarity(a, b): number`
+
+Compute cosine similarity between two vectors. Returns a value in `[0, 1]` for non-negative vectors, or `[-1, 1]` in general. Returns `0` if either vector has zero magnitude.
+
+```typescript
+const sim = cosineSimilarity([1, 0, 0], [0, 1, 0]); // => 0
+const sim = cosineSimilarity([1, 0, 0], [1, 0, 0]); // => 1
+```
+
+### Data Format
+
+The vector store writes to `.chrysalis/state/vectors.json`:
+
+```json
+{
+  "1710000000-a1b2c3": {
+    "text": "GEPA uses reflective prompt evolution",
+    "vec": [0.12, -0.34, 0.56, ...]
+  }
+}
+```
+
+The `VectorEntry` type (from `ts/core/types.ts`):
+
+```typescript
+interface VectorEntry {
+  text: string;
+  vec: number[];
+}
+```
 
 ---
 
 ## RDF Store
 
-The RDF store (`src/stores/rdf-store.rkt`) provides a SQLite-backed triple/quad store for structured knowledge.
+The RDF store manages structured knowledge as triples (subject–predicate–object) with optional graph and timestamp fields. It uses pattern-matching queries with `?` wildcards — not SQL.
+
+**Source:** `ts/core/stores/rdf-store.ts`
 
 ### Data Model
 
-Each fact is stored as a **quad** (triple + graph):
+Every entry in the RDF store is a `Triple`:
 
-| Field | Description |
-|-------|-------------|
-| `subject` | The entity being described |
-| `predicate` | The relationship type |
-| `object` | The value or related entity |
-| `graph` | Named graph for organizing facts |
-| `timestamp` | When the fact was recorded (epoch seconds) |
+```typescript
+interface Triple {
+  subject: string;
+  predicate: string;
+  object: string;
+  graph: string;      // named graph (defaults to "default")
+  timestamp: number;   // Unix epoch seconds
+}
+```
+
+Triples are grouped by graph. Loading a file into a graph replaces all existing triples in that graph, preserving triples from other graphs.
 
 ### API
 
-```racket
-(require "src/stores/rdf-store.rkt")
-
-;; Insert a triple
-(rdf-insert! "auth.rkt" "implements" "JWT")
-(rdf-insert! "auth.rkt" "author" "alice" "project-facts")
-(rdf-insert! "auth.rkt" "modified" "2024-01-15" "project-facts" 1705276800)
-
-;; Load triples from a file
-(rdf-load! "project-facts.ttl" "project-graph")
-
-;; Query the knowledge graph
-(rdf-query "auth.rkt ?p ?o" "default")
-; → All predicates and objects for auth.rkt
+```typescript
+import { rdfLoad, rdfQuery, rdfInsert } from "./core/stores/rdf-store.js";
 ```
 
-### Query Pattern Syntax
+#### `rdfLoad(cwd, path, graphId): Promise<string>`
 
-Patterns use `?` prefix for variables:
+Load triples from a text file into a named graph. Each line in the file should contain whitespace-separated `subject predicate object` tokens. Any content after the first three tokens becomes the object (allowing objects with spaces).
 
-#### 3-Part Patterns (Triples)
+Loading into a graph **replaces** all existing triples in that graph. Triples in other graphs are preserved.
 
-| Pattern | Finds |
-|---------|-------|
-| `?s predicate object` | Subjects with given predicate-object |
-| `subject ?p object` | Predicates linking subject to object |
-| `subject predicate ?o` | Objects for given subject-predicate |
-| `?s ?p object` | All triples with given object |
-| `?s predicate ?o` | All subject-object pairs for predicate |
-| `subject ?p ?o` | All facts about subject |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cwd` | `string` | Project root directory |
+| `path` | `string` | Path to the triple file |
+| `graphId` | `string` | Named graph to load into |
 
-#### 4-Part Patterns (Quads)
+Returns: a summary string like `"Loaded 42 lines into graph my-graph."`.
 
-| Pattern | Finds |
-|---------|-------|
-| `?s predicate object graph` | Subjects in specific graph |
-| `subject predicate ?o graph` | Objects in specific graph |
-| `subject predicate object ?g` | Graphs containing the triple |
+**Triple file format** (`knowledge.txt`):
 
-### Examples
-
-```racket
-;; Find all files that implement JWT
-(rdf-query "?s implements JWT" "default")
-
-;; Find what auth.rkt implements
-(rdf-query "auth.rkt implements ?o" "default")
-
-;; Find all facts about auth.rkt
-(rdf-query "auth.rkt ?p ?o" "default")
-
-;; Find facts in the project-facts graph
-(rdf-query "?s author ?o project-facts" "default")
-
-;; Raw SQL for complex queries
-(rdf-query "SELECT * FROM triples WHERE predicate='depends-on' ORDER BY timestamp DESC" "default")
+```
+chrysalis implements prompt-evolution
+gepa outperforms reinforcement-learning
+gepa uses reflective-prompt-evolution
+maker enables million-step-reasoning
 ```
 
-### Storage
+```typescript
+const result = await rdfLoad(projectDir, "knowledge.txt", "research");
+// => "Loaded 4 lines into graph research."
+```
 
-The RDF store persists to `~/.chrysalis/graph.db` (SQLite).
+#### `rdfQuery(cwd, query, graphId?): Promise<string>`
+
+Query the store using pattern-matching syntax. Returns JSON-stringified matching triples.
+
+**Pattern syntax:** Space-separated fields map to `subject predicate object graph`. Use `?` as a wildcard for any field. Omitted trailing fields are unconstrained.
+
+| Pattern | Meaning |
+|---------|---------|
+| `?s predicate object` | Match by predicate and object |
+| `?s ?p object` | Match by object only |
+| `subject ?p ?o` | Match by subject only |
+| `subject predicate ?o ?g` | Match by subject and predicate across all graphs |
+| `subject predicate object graph` | Exact match |
+
+Results are capped at 200 triples.
+
+> **Note:** SQL `SELECT` queries are not supported. The store is JSON-backed, not SQL-backed. If you attempt a `SELECT` query, you'll receive an error message with guidance to use pattern syntax instead.
+
+```typescript
+// Find everything about GEPA
+const result = await rdfQuery(projectDir, "gepa ?p ?o");
+// => JSON array of matching triples
+
+// Find all evolution methods
+const result = await rdfQuery(projectDir, "?s uses ?o", "research");
+
+// Exact match
+const result = await rdfQuery(projectDir, "gepa outperforms reinforcement-learning");
+```
+
+#### `rdfInsert(cwd, subject, predicate, object, graph?, timestamp?): Promise<string>`
+
+Insert a single triple into the store. The graph defaults to `"default"` and the timestamp defaults to the current time.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cwd` | `string` | Project root directory |
+| `subject` | `string` | Subject URI or label |
+| `predicate` | `string` | Predicate URI or label |
+| `object` | `string` | Object value |
+| `graph` | `string` | Named graph (default: `"default"`) |
+| `timestamp` | `number` | Unix epoch seconds (default: now) |
+
+```typescript
+const result = await rdfInsert(
+  projectDir,
+  "chrysalis",
+  "stores-knowledge-in",
+  "json-files",
+  "project-facts"
+);
+// => "Inserted triple: chrysalis stores-knowledge-in json-files (graph: project-facts)"
+```
+
+### Data Location
+
+The RDF store writes to `.chrysalis/state/rdf/graph.db` as a JSON array of triples:
+
+```json
+[
+  {
+    "subject": "gepa",
+    "predicate": "outperforms",
+    "object": "reinforcement-learning",
+    "graph": "research",
+    "timestamp": 1710000000
+  }
+]
+```
 
 ---
 
-## RDF Tools
+## RDF Tools (Pi Agent Interface)
 
-The RDF tools (`src/tools/rdf-tools.rkt`) expose knowledge graph operations to the agent.
+The Pi agent accesses RDF functionality through three tool definitions dispatched by `executeRdfTool()`. These tools are registered in `ts/core/tools/rdf-tools.ts` and exposed to the Pi agent via `ts/pi/chrysalis-extension.ts`.
+
+**Source:** `ts/core/tools/rdf-tools.ts`
 
 ### Tool Definitions
 
-```racket
-(make-rdf-tools)
-; Returns tool schemas for: rdf_load, rdf_query, rdf_insert
-```
+| Tool | Description | Required Params | Optional Params |
+|------|-------------|-----------------|-----------------|
+| `rdf_load` | Load triples from a file into a named graph | `path`, `id` | — |
+| `rdf_query` | Query the knowledge graph with pattern syntax | `query` | `id` (default graph) |
+| `rdf_insert` | Insert a single triple or quad | `subject`, `predicate`, `object` | `graph`, `timestamp` |
 
-### rdf_load
+### `executeRdfTool(cwd, name, args): Promise<string>`
 
-Load triples from a file into a named graph.
+Dispatch function that routes tool calls to the appropriate RDF store function.
 
-```json
-{
-  "name": "rdf_load",
-  "arguments": {
-    "path": "knowledge/project-facts.ttl",
-    "id": "project"
-  }
-}
-```
+```typescript
+import { executeRdfTool } from "./core/tools/rdf-tools.js";
 
-### rdf_query
-
-Query the knowledge graph with patterns.
-
-```json
-{
-  "name": "rdf_query",
-  "arguments": {
-    "query": "?s implements JWT",
-    "id": "default"
-  }
-}
-```
-
-### rdf_insert
-
-Insert a single fact with optional timestamp.
-
-```json
-{
-  "name": "rdf_insert",
-  "arguments": {
-    "subject": "api-router.rkt",
-    "predicate": "depends-on",
-    "object": "auth.rkt",
-    "graph": "dependencies",
-    "timestamp": 1705276800
-  }
-}
+const result = await executeRdfTool(projectDir, "rdf_query", {
+  query: "gepa ?p ?o"
+});
 ```
 
 ---
 
-## Semantic Mode
+## Data Locations Summary
 
-The context mode `'semantic` enables RDF operations. Set it in the context:
+| Store | File | Content |
+|-------|------|---------|
+| Vector Store | `.chrysalis/state/vectors.json` | `Record<string, VectorEntry>` |
+| RDF Store | `.chrysalis/state/rdf/graph.db` | `Triple[]` |
 
-```racket
-(define ctx
-  (ctx #:system "You are a knowledge engineer."
-       #:mode 'semantic
-       #:priority 'best))
-```
-
-In semantic mode, the agent has access to:
-- All RDF tools (`rdf_load`, `rdf_query`, `rdf_insert`)
-- File reading (to extract facts)
-- No file writing (read-only analysis)
+Both stores are initialized automatically on first use. No setup or external database is required.
 
 ---
 
-## Building a Project Knowledge Base
+## Usage Patterns
 
-Here's a practical example of building a knowledge graph for a codebase:
+### Building a Project Knowledge Base
 
-### 1. Define Your Ontology
+```typescript
+import { rdfLoad, rdfInsert, rdfQuery } from "./core/stores/rdf-store.js";
+import { vectorAdd, vectorSearch } from "./core/stores/vector-store.js";
 
-```
-# Predicates for code relationships
-implements    - File implements a concept
-depends-on    - File depends on another file
-exports       - File exports a function/struct
-authored-by   - File was written by
-modified-at   - Last modification timestamp
-```
+// 1. Load structured facts from a file
+await rdfLoad(projectDir, "docs/facts.txt", "project");
 
-### 2. Bootstrap with Facts
+// 2. Insert individual facts
+await rdfInsert(projectDir, "api", "exposes-endpoint", "/evolve", "project");
+await rdfInsert(projectDir, "evolution", "uses-method", "gepa", "project");
 
-```racket
-;; Core module relationships
-(rdf-insert! "auth.rkt" "implements" "authentication")
-(rdf-insert! "auth.rkt" "implements" "JWT")
-(rdf-insert! "auth.rkt" "exports" "create-jwt")
-(rdf-insert! "auth.rkt" "exports" "verify-jwt")
-(rdf-insert! "auth.rkt" "depends-on" "config.rkt")
+// 3. Query relationships
+const methods = await rdfQuery(projectDir, "evolution uses-method ?o", "project");
 
-(rdf-insert! "billing.rkt" "implements" "usage-tracking")
-(rdf-insert! "billing.rkt" "depends-on" "auth.rkt")
-(rdf-insert! "billing.rkt" "depends-on" "db.rkt")
+// 4. Add semantic passages for retrieval
+await vectorAdd(projectDir, "The evolution engine runs GEPA-style ...", evolutionEmbedding);
+await vectorAdd(projectDir, "Decomposition follows the MAKER ...", decompEmbedding);
+
+// 5. Search semantically
+const similar = await vectorSearch(projectDir, queryEmbedding, 5);
 ```
 
-### 3. Query for Understanding
+### Agent Memory in a Pi Session
 
-```racket
-;; What depends on auth.rkt?
-(rdf-query "?s depends-on auth.rkt" "default")
+Within a Pi agent session, the RDF tools are available directly:
 
-;; What does billing.rkt depend on?
-(rdf-query "billing.rkt depends-on ?o" "default")
-
-;; Find all JWT-related files
-(rdf-query "?s implements JWT" "default")
+```
+/rdf_insert subject=chrysalis predicate=supports object=typescript graph=project-facts
+/rdf_query query="chrysalis ?p ?o"
+/rdf_load path=knowledge.txt id=external-kb
 ```
 
-### 4. Temporal Queries
+### Combining Both Stores
 
-With timestamps, you can track knowledge evolution:
+The vector store and RDF store complement each other:
 
-```racket
-;; Insert with timestamp
-(rdf-insert! "auth.rkt" "status" "refactored" "default" (current-seconds))
+- **Vector store** — answers "what is similar to X?" Good for retrieval-augmented generation, finding relevant context, and fuzzy matching.
+- **RDF store** — answers "what is the relationship between X and Y?" Good for structured queries, relationship traversal, and exact entity lookups.
 
-;; Query recent changes (via raw SQL)
-(rdf-query "SELECT * FROM triples WHERE timestamp > 1705000000 ORDER BY timestamp DESC" "default")
-```
+A typical agent workflow:
+1. Use **vector search** to find relevant passages for the current query.
+2. Use **RDF query** to look up specific relationships mentioned in those passages.
+3. Use **RDF insert** to record new facts discovered during the session.
+4. Use **vector add** to store important passages for future retrieval.
 
 ---
 
-## Combining Vector and RDF Search
+## Design Decisions
 
-For optimal retrieval, combine both approaches:
+### Why JSON-backed, not SQLite?
 
-```racket
-;; 1. Use vector search to find relevant context
-(define similar (vector-search "authentication flow" api-key))
+The Racket predecessor used SQLite for the RDF store. The TypeScript migration deliberately switched to JSON files for:
 
-;; 2. Extract entities from results
-(define entities (extract-file-names similar))
+1. **Zero dependencies** — no native module compilation, works everywhere Node.js runs.
+2. **Transparency** — data is human-readable and debuggable with any text editor.
+3. **Portability** — copy the `.chrysalis/` directory to back up or transfer all project state.
 
-;; 3. Use RDF to get structured relationships
-(for ([entity entities])
-  (printf "~a depends on: ~a~n" 
-          entity 
-          (rdf-query (format "~a depends-on ?o" entity) "default")))
-```
+The trade-off is query performance on very large graphs. For typical agent knowledge bases (hundreds to low thousands of triples), JSON I/O is fast enough. The 200-result cap on queries prevents pathological cases.
 
-This hybrid approach gives you:
-- **Breadth** from semantic similarity
-- **Precision** from structured relationships
-- **Temporal awareness** from timestamps
+### Why No SQL Support?
 
----
+The `rdfQuery` function detects `SELECT`-style queries and returns an error with guidance. Pattern matching is the intended query interface — it maps directly to the JSON-backed storage model without a SQL parser. If you need complex relational queries, consider exporting the triples and loading them into a dedicated graph database.
 
-## Data Locations
+### Wildcard Semantics
 
-| Store | Path | Format |
-|-------|------|--------|
-| Vector Store | `~/.chrysalis/vectors.json` | JSON hash |
-| RDF Store | `~/.chrysalis/graph.db` | SQLite |
+The `?` wildcard matches any value in that field position. Trailing wildcards can be omitted — `subject predicate` is equivalent to `subject predicate ?o ?g`. This keeps the query syntax concise for the common case of querying by subject and/or predicate.

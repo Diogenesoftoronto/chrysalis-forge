@@ -1,1 +1,0 @@
-("9.0" ta6le ("3cb575a2f7795cd98b537cf95f9b4c5327cd3a23" . "834dd50d88bb2b25c10a73ee42d800b790c42126") (collects #"chrysalis-forge" #"src" #"tools" #"acp-tools.rkt") (collects #"racket" #"base.rkt") (collects #"racket" #"list.rkt") (collects #"racket" #"runtime-config.rkt") (collects #"rackunit" #"main.rkt") (collects #"rackunit" #"text-ui.rkt"))

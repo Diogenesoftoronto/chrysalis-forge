@@ -1,86 +1,53 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AssistantRuntimeProvider, useLocalRuntime } from "@assistant-ui/react";
-import { useStyletron } from "baseui";
+import {
+  AssistantRuntimeProvider,
+  useLocalRuntime,
+} from "@assistant-ui/react";
 import ThreadView from "../components/ThreadView";
-import { NativeSelect } from "../components/NativeSelect";
+import { Select } from "../components/ui/select";
 import { makePiAdapter } from "../lib/runtime";
 import { prompts } from "../lib/piContent";
 import { hasKey } from "../lib/settings";
 
 export default function Chat() {
-  const [css, theme] = useStyletron();
   const [promptId, setPromptId] = useState(prompts[0].id);
   const systemRef = useRef(prompts[0].body);
-  systemRef.current = prompts.find((p) => p.id === promptId)?.body ?? prompts[0].body;
+  systemRef.current =
+    prompts.find((p) => p.id === promptId)?.body ?? prompts[0].body;
 
-  const runtime = useLocalRuntime(useMemo(() => makePiAdapter(() => systemRef.current), []));
+  const runtime = useLocalRuntime(
+    useMemo(() => makePiAdapter(() => systemRef.current), []),
+  );
 
   return (
-    <section
-      className={css({
-        display: "flex",
-        height: "calc(100vh - 10rem)",
-        flexDirection: "column",
-        gap: theme.sizing.scale400,
-      })}
-    >
-      <div
-        className={css({
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: theme.sizing.scale500,
-        })}
-      >
-        <label
-          className={css({
-            display: "flex",
-            alignItems: "center",
-            gap: theme.sizing.scale300,
-            fontSize: theme.typography.font200.fontSize,
-            color: theme.colors.contentSecondary,
-          })}
-        >
+    <section className="flex h-[calc(100vh-10rem)] flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
           Task prompt
-          <NativeSelect
+          <Select
             value={promptId}
             onChange={(e) => setPromptId(e.target.value)}
-            className={css({ height: theme.sizing.scale950 })}
-          />
+            className="h-9"
+          >
+            {prompts.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title}
+              </option>
+            ))}
+          </Select>
         </label>
         {!hasKey() && (
-          <span
-            className={css({
-              fontSize: theme.typography.font200.fontSize,
-              color: theme.colors.warning,
-            })}
-          >
+          <span className="text-sm text-amber-400">
             No API key —{" "}
-            <Link
-              to="/settings"
-              className={css({
-                color: theme.colors.warning,
-                textDecoration: "underline",
-              })}
-            >
+            <Link to="/settings" className="underline">
               add one in Settings
             </Link>
             .
           </span>
         )}
       </div>
-      <div
-        className={css({
-          flex: 1,
-          overflow: "hidden",
-          borderRadius: theme.borders.radius300,
-          borderWidth: "1px",
-          borderStyle: "solid",
-          borderColor: theme.colors.borderOpaque,
-          backgroundColor: theme.colors.backgroundSecondary,
-        })}
-      >
+      <div className="flex-1 overflow-hidden rounded-lg border border-border bg-card">
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadView />
         </AssistantRuntimeProvider>

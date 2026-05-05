@@ -2,7 +2,7 @@
 
 Chrysalis Forge emerges from a confluence of research threads that have, in recent years, begun to reshape how we think about building intelligent systems. Rather than treating large language models as monolithic oracles to be prompted and hoped for the best, this framework treats them as components in a larger evolutionary and geometric system—one that learns, adapts, and improves through principled mechanisms borrowed from evolutionary computation, differential geometry, and distributed systems theory.
 
-This document is intended for researchers, graduate students, and developers who want to understand not just *what* Chrysalis Forge does, but *why* it does it that way. We trace each major component back to its theoretical roots, quote the key insights from the foundational papers, and show how these ideas manifest in the Racket implementation.
+This document is intended for researchers, graduate students, and developers who want to understand not just *what* Chrysalis Forge does, but *why* it does it that way. We trace each major component back to its theoretical roots, quote the key insights from the foundational papers, and show how these ideas manifest in the TypeScript implementation under `ts/`.
 
 ---
 
@@ -32,26 +32,29 @@ The results are striking: GEPA outperforms GRPO (Group Relative Policy Optimizat
 
 ### Implementation in Chrysalis Forge
 
-The [`optimizer-gepa.rkt`](../src/core/optimizer-gepa.rkt) module implements this reflective evolution loop. The core function is deceptively simple because the complexity lives in the meta-prompt that guides the optimizer LLM:
+The [`evolution.ts`](../ts/core/evolution.ts) module implements this reflective evolution loop. The core function is deceptively simple because the complexity lives in the meta-prompt that guides the optimizer LLM:
 
-```racket
-(define (gepa-evolve! feedback [model "gpt-5.2"])
-  (check-usage!)
-  (define active (ctx-get-active))
-  (define sender (make-openai-sender #:model model))
-  (define-values (ok? res usage) 
-    (sender (format "~a\nCURRENT: ~a\nFEEDBACK: ~a" 
-                    (get-meta) (Ctx-system active) feedback)))
-  (if ok?
-      (let ([new-sys (hash-ref (string->jsexpr res) 'new_system_prompt)])
-        (log-cost-analysis model usage)
-        (save-ctx! (let ([db (load-ctx)]) 
-                     (hash-set db 'items 
-                       (hash-set (hash-ref db 'items) 
-                                 (format "evo_~a" (current-seconds)) 
-                                 (struct-copy Ctx active [system new-sys])))))
-        "Context Evolved.")
-      "Evolution Failed."))
+```ts
+async function gepaEvolve(
+  feedback: string,
+  model = "gpt-5.2"
+): Promise<string> {
+  checkUsage();
+  const active = ctxGetActive();
+  const sender = makeOpenAiSender({ model });
+  const [ok, res, usage] = await sender(
+    `${getMeta()}\nCURRENT: ${active.system}\nFEEDBACK: ${feedback}`
+  );
+  if (!ok) return "Evolution Failed.";
+
+  const parsed = JSON.parse(res);
+  const newSys: string = parsed.new_system_prompt;
+  logCostAnalysis(model, usage);
+  const db = loadCtx();
+  db.items[`evo_${Date.now()}`] = { ...active, system: newSys };
+  saveCtx(db);
+  return "Context Evolved.";
+}
 ```
 
 The `get-meta` function returns the meta-prompt—the instructions that tell the optimizer *how* to optimize. This is itself subject to evolution through `gepa-meta-evolve!`, creating a recursive self-improvement loop. The evolved contexts are versioned with timestamps, maintaining a history that could be analyzed to understand the evolution trajectory.
@@ -74,10 +77,15 @@ The algorithm works by discretizing a behavioral space (what MAP-Elites calls th
 
 ### The Phenotype Space in Chrysalis
 
-In Chrysalis Forge, we use a four-dimensional phenotype space defined in [`dspy-core.rkt`](../src/llm/dspy-core.rkt):
+In Chrysalis Forge, we use a four-dimensional phenotype space defined in [`types.ts`](../ts/core/types.ts):
 
-```racket
-(struct Phenotype (accuracy latency cost usage) #:transparent)
+```ts
+export interface Phenotype {
+  accuracy: number;
+  latency: number;
+  cost: number;
+  usage: number;
+}
 ```
 
 These dimensions capture the fundamental trade-offs in LLM-based systems:
@@ -90,10 +98,29 @@ These dimensions capture the fundamental trade-offs in LLM-based systems:
 
 **Usage** measures output verbosity. Sometimes you want concise answers; sometimes you want thorough explanations. This dimension captures that preference.
 
-The `ModuleArchive` structure maintains both discrete bins (for backward-compatible keyword selection) and a continuous point cloud (for geometric KNN selection):
+The `ArchiveEntry` and `DecompositionArchive` structures maintain both discrete bins (for backward-compatible keyword selection) and a continuous point cloud (for geometric KNN selection):
 
-```racket
-(struct ModuleArchive (id sig archive point-cloud default-id) #:transparent)
+```ts
+export interface ArchiveEntry {
+  id: string;
+  family: EvolutionFamily;
+  taskFamily: string;
+  content: string;
+  score: number;
+  phenotype: Phenotype;
+  binKey: string;
+  createdAt: string;
+  active: boolean;
+  model: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface DecompositionArchive {
+  taskType: string;
+  archive: Record<string, { score: number; pattern: DecompositionPattern }>;
+  pointCloud: Array<{ phenotype: DecompPhenotype; pattern: DecompositionPattern }>;
+  defaultId: string | null;
+}
 ```
 
 The dual representation is key to flexibility. The `archive` hash maps bin keys to (score, module) pairs, enabling fast lookup when the user specifies a keyword like "fast" or "cheap". The `point-cloud` list of (phenotype, module) pairs enables smooth interpolation when the user provides natural language like "I need something reasonably fast but accuracy matters more."
@@ -110,80 +137,77 @@ The "Attention Is Not What You Need" paper (Zhang, 2025) proposes a radical reth
 
 While Chrysalis Forge doesn't implement Grassmann flows at the neural architecture level (that would require custom model training), it adopts the geometric philosophy for selection. The phenotype space is treated as a continuous manifold, and selection is performed via K-nearest-neighbor search in this space.
 
-The [`dspy-selector.rkt`](../src/llm/dspy-selector.rkt) module implements this geometric selection:
+The [`priority.ts`](../ts/core/priority.ts) module implements this geometric selection:
 
-```racket
-(define (phenotype-distance p1 p2)
-  (sqrt (+ (expt (- (Phenotype-accuracy p1) (Phenotype-accuracy p2)) 2)
-           (expt (- (Phenotype-latency p1) (Phenotype-latency p2)) 2)
-           (expt (- (Phenotype-cost p1) (Phenotype-cost p2)) 2)
-           (expt (- (Phenotype-usage p1) (Phenotype-usage p2)) 2))))
+```ts
+function phenotypeDistance(p1: Phenotype, p2: Phenotype): number {
+  return Math.sqrt(
+    (p1.accuracy - p2.accuracy) ** 2 +
+    (p1.latency  - p2.latency)  ** 2 +
+    (p1.cost     - p2.cost)     ** 2 +
+    (p1.usage   - p2.usage)   ** 2
+  );
+}
 
-(define (normalize-phenotype pheno mins maxs)
-  (define (safe-norm v lo hi) 
-    (if (= lo hi) 0.5 (/ (- v lo) (- hi lo))))
-  (Phenotype (safe-norm (Phenotype-accuracy pheno) (first mins) (first maxs))
-             (safe-norm (Phenotype-latency pheno) (second mins) (second maxs))
-             (safe-norm (Phenotype-cost pheno) (third mins) (third maxs))
-             (safe-norm (Phenotype-usage pheno) (fourth mins) (fourth maxs))))
+function normalizePhenotype(
+  pheno: Phenotype,
+  mins: number[],
+  maxs: number[]
+): Phenotype {
+  const safeNorm = (v: number, lo: number, hi: number) =>
+    lo === hi ? 0.5 : (v - lo) / (hi - lo);
+  return {
+    accuracy: safeNorm(pheno.accuracy, mins[0], maxs[0]),
+    latency:  safeNorm(pheno.latency,  mins[1], maxs[1]),
+    cost:     safeNorm(pheno.cost,     mins[2], maxs[2]),
+    usage:    safeNorm(pheno.usage,    mins[3], maxs[3]),
+  };
+}
 ```
 
 The normalization step is crucial. Raw phenotype values have different scales—accuracy might range from 0-10, latency from 100-10000ms, cost from 0.001-0.1 dollars. Without normalization, the distance metric would be dominated by whichever dimension has the largest absolute values. By normalizing to [0,1], we ensure each dimension contributes proportionally.
 
-The `select-elite` function performs KNN search (with K=1) in the normalized space:
+The `selectElite` function performs KNN search (with K=1) in the normalized space:
 
-```racket
-(define (select-elite archive target)
-  (define cloud (ModuleArchive-point-cloud archive))
-  (when (null? cloud)
-    (error "Cannot select elite: point cloud is empty"))
-  
-  (define-values (mins maxs) (find-bounds cloud))
-  (define target-norm (normalize-phenotype target mins maxs))
-  
-  (define scored
-    (for/list ([entry cloud])
-      (define pheno (car entry))
-      (define mod (cdr entry))
-      (define pheno-norm (normalize-phenotype pheno mins maxs))
-      (cons (phenotype-distance target-norm pheno-norm) mod)))
-  
-  (define sorted (sort scored < #:key car))
-  (cdr (first sorted)))
+```ts
+function selectElite(
+  archive: DecompositionArchive,
+  target: Phenotype
+): DecompositionPattern {
+  const cloud = archive.pointCloud;
+  if (cloud.length === 0)
+    throw new Error("Cannot select elite: point cloud is empty");
+
+  const [mins, maxs] = findBounds(cloud);
+  const targetNorm = normalizePhenotype(target, mins, maxs);
+
+  const scored = cloud.map((entry) => {
+    const phenoNorm = normalizePhenotype(entry.phenotype, mins, maxs);
+    return { dist: phenotypeDistance(targetNorm, phenoNorm), pattern: entry.pattern };
+  });
+
+  scored.sort((a, b) => a.dist - b.dist);
+  return scored[0].pattern;
+}
 ```
 
-This geometric approach enables something powerful: natural language priority specification. The `text->vector` function maps natural language descriptions to target phenotypes, either through a keyword fast-path or through LLM interpretation:
+This geometric approach enables something powerful: natural language priority specification. The `interpretProfilePhrase` function in [`priority.ts`](../ts/core/priority.ts) maps natural language descriptions to Chrysalis profiles, either through a regex fast-path or through LLM interpretation:
 
-```racket
-(define KEYWORD-MAP
-  (hash "fast"     (Phenotype 5.0 0.0 0.5 0.5)   ; Low latency
-        "cheap"    (Phenotype 5.0 0.5 0.0 0.5)   ; Low cost  
-        "accurate" (Phenotype 10.0 0.5 0.5 0.5)  ; High accuracy
-        "concise"  (Phenotype 5.0 0.5 0.5 0.0)   ; Low usage
-        "verbose"  (Phenotype 5.0 0.5 0.5 1.0))) ; High usage
-
-(define (text->vector text [send! #f])
-  (define lower (string-downcase text))
-  (define matched
-    (for/first ([(kw pheno) (in-hash KEYWORD-MAP)]
-                #:when (string-contains? lower kw))
-      pheno))
-  (cond
-    [matched matched]
-    [send!
-     ;; Use LLM to interpret novel descriptions
-     (define prompt 
-       (format "The user wants an agent with priority: \"~a\"
-Return JSON with accuracy, speed, cost, brevity (0.0-1.0 scale)." text))
-     (define-values (ok? raw meta) (send! prompt))
-     (if ok?
-         (let ([parsed (string->jsexpr raw)])
-           (Phenotype (* 10.0 (hash-ref parsed 'accuracy 0.5))
-                      (- 1.0 (hash-ref parsed 'speed 0.5))
-                      (- 1.0 (hash-ref parsed 'cost 0.5))
-                      (- 1.0 (hash-ref parsed 'brevity 0.5))))
-         (Phenotype 5.0 0.5 0.5 0.5))]
-    [else (Phenotype 5.0 0.5 0.5 0.5)]))
+```ts
+export function interpretProfilePhrase(
+  input: string
+): { profile: ChrysalisProfile; reason: string } {
+  const normalized = input.trim().toLowerCase();
+  if (/\bfast|quick|urgent|speed|hurry\b/.test(normalized))
+    return { profile: "fast", reason: "matched speed-oriented language" };
+  if (/\bcheap|budget|broke|cost|low[- ]?cost\b/.test(normalized))
+    return { profile: "cheap", reason: "matched cost-sensitive language" };
+  if (/\bverbose|detailed|thorough|teach|explain\b/.test(normalized))
+    return { profile: "verbose", reason: "matched high-explanation language" };
+  if (/\bbest|accurate|precision|careful|deep|quality\b/.test(normalized))
+    return { profile: "best", reason: "matched quality-oriented language" };
+  return { profile: "best", reason: "safe default for ambiguous phrase" };
+}
 ```
 
 A user saying "I'm broke but need precision" triggers the LLM interpretation path, which returns something like `{accuracy: 0.9, speed: 0.3, cost: 0.1, brevity: 0.5}`. This gets transformed into a target phenotype emphasizing accuracy and low cost, which then drives KNN selection to find the closest elite in the archive.
@@ -210,16 +234,22 @@ The results are remarkable:
 
 ### Geometric Decomposition in Chrysalis
 
-Chrysalis Forge implements MAKER-inspired decomposition in [`geometric-decomposition.rkt`](../src/core/geometric-decomposition.rkt). The module defines a decomposition phenotype that extends the module phenotype with task-specific dimensions:
+Chrysalis Forge implements MAKER-inspired decomposition in [`decomp-planner.ts`](../ts/core/decomp-planner.ts). The module defines a decomposition phenotype that extends the module phenotype with task-specific dimensions:
 
-```racket
-(struct DecompositionPhenotype 
-  (depth breadth accumulated-cost context-size success-rate) 
-  #:transparent)
+```ts
+export interface DecompPhenotype {
+  depth: number;
+  parallelism: number;
+  toolDiversity: number;
+  complexity: number;
+}
 
-(struct DecompositionLimits 
-  (max-depth max-breadth max-cost max-context min-success-rate) 
-  #:transparent)
+export interface DecompositionPattern {
+  id: string;
+  name: string;
+  steps: DecompStep[];
+  metadata: Record<string, unknown>;
+}
 ```
 
 The **depth** dimension tracks how deeply the task has been decomposed—how many levels of subtasks. Excessive depth suggests the decomposition strategy is wrong or the task is genuinely intractable.
@@ -234,64 +264,67 @@ The **success-rate** tracks the fraction of subtasks that succeed. A dropping su
 
 The explosion detection mechanism monitors all these dimensions against limits that vary by priority:
 
-```racket
-(define (limits-for-priority priority budget context-limit)
-  (match priority
-    ['critical
-     (DecompositionLimits 10 20 (* budget 2.0) (* context-limit 1.5) 0.6)]
-    ['high
-     (DecompositionLimits 8 15 (* budget 1.5) context-limit 0.7)]
-    ['normal
-     (DecompositionLimits 6 10 budget (* context-limit 0.8) 0.75)]
-    ['low
-     (DecompositionLimits 4 6 (* budget 0.5) (* context-limit 0.5) 0.8)]
-    [_
-     (DecompositionLimits 6 10 budget context-limit 0.75)]))
+```ts
+function limitsForPriority(
+  priority: string,
+  budget: number,
+  contextLimit: number
+): DecompositionLimits {
+  const table: Record<string, DecompositionLimits> = {
+    critical: { maxDepth: 10, maxBreadth: 20, maxCost: budget * 2.0, maxContext: contextLimit * 1.5, minSuccessRate: 0.6 },
+    high:     { maxDepth: 8,  maxBreadth: 15, maxCost: budget * 1.5, maxContext: contextLimit,      minSuccessRate: 0.7 },
+    normal:   { maxDepth: 6,  maxBreadth: 10, maxCost: budget,       maxContext: contextLimit * 0.8, minSuccessRate: 0.75 },
+    low:      { maxDepth: 4,  maxBreadth: 6,  maxCost: budget * 0.5, maxContext: contextLimit * 0.5, minSuccessRate: 0.8 },
+  };
+  return table[priority] ?? { maxDepth: 6, maxBreadth: 10, maxCost: budget, maxContext: contextLimit, minSuccessRate: 0.75 };
+}
 
-(define (detect-explosion phenotype limits)
-  (cond
-    [(> (DecompositionPhenotype-depth phenotype)
-        (DecompositionLimits-max-depth limits))
-     'depth]
-    [(> (DecompositionPhenotype-breadth phenotype)
-        (DecompositionLimits-max-breadth limits))
-     'breadth]
-    [(> (DecompositionPhenotype-accumulated-cost phenotype)
-        (DecompositionLimits-max-cost limits))
-     'cost]
-    [(> (DecompositionPhenotype-context-size phenotype)
-        (DecompositionLimits-max-context limits))
-     'context]
-    [(< (DecompositionPhenotype-success-rate phenotype)
-        (DecompositionLimits-min-success-rate limits))
-     'low-success]
-    [else #f]))
+function detectExplosion(
+  phenotype: DecompPhenotype,
+  limits: DecompositionLimits
+): string | null {
+  if (phenotype.depth        > limits.maxDepth)     return "depth";
+  if (phenotype.parallelism  > limits.maxBreadth)   return "breadth";
+  if (phenotype.complexity   > limits.maxCost)      return "cost";
+  if (phenotype.toolDiversity > limits.maxContext)  return "context";
+  return null;
+}
 ```
 
-When an explosion is detected, the system doesn't simply fail. It rolls back to the most recent checkpoint and tries an alternative approach:
+When an explosion is detected, the system doesn't simply fail. It rolls back to the most recent checkpoint and tries an alternative approach. The rollback store in [`rollback-store.ts`](../ts/core/stores/rollback-store.ts) manages snapshots:
 
-```racket
-(define (checkpoint! state reason)
-  (define snap (snapshot-tree (DecompositionState-tree state)))
-  (define cp (DecompositionCheckpoint snap
-                                       (DecompositionState-phenotype state)
-                                       (DecompositionState-steps-taken state)
-                                       reason))
-  (set-DecompositionState-checkpoints! state 
-                                        (cons cp (DecompositionState-checkpoints state)))
-  state)
+```ts
+interface RollbackEntry {
+  timestamp: number;
+  backupPath: string;
+}
 
-(define (rollback! state)
-  (define cps (DecompositionState-checkpoints state))
-  (when (null? cps)
-    (error 'rollback! "No checkpoints available"))
-  (define cp (car cps))
-  (restore-tree! (DecompositionState-tree state) 
-                 (DecompositionCheckpoint-tree-snapshot cp))
-  (set-DecompositionState-phenotype! state (DecompositionCheckpoint-phenotype cp))
-  (set-DecompositionState-steps-taken! state (DecompositionCheckpoint-step-index cp))
-  (set-DecompositionState-checkpoints! state (cdr cps))
-  state)
+function checkpoint(state: DecompositionState, reason: string): DecompositionState {
+  const snap = snapshotTree(state.tree);
+  const cp: DecompositionCheckpoint = {
+    treeSnapshot: snap,
+    phenotype: { ...state.phenotype },
+    stepsTaken: state.stepsTaken,
+    reason,
+  };
+  return {
+    ...state,
+    checkpoints: [cp, ...state.checkpoints],
+  };
+}
+
+function rollback(state: DecompositionState): DecompositionState {
+  if (state.checkpoints.length === 0)
+    throw new Error("rollback: No checkpoints available");
+  const [cp, ...rest] = state.checkpoints;
+  restoreTree(state.tree, cp.treeSnapshot);
+  return {
+    ...state,
+    phenotype: cp.phenotype,
+    stepsTaken: cp.stepsTaken,
+    checkpoints: rest,
+  };
+}
 ```
 
 This checkpoint/rollback mechanism is what allows Chrysalis to explore multiple decomposition strategies without committing irrevocably to any one approach. If a strategy leads to explosion, the system can backtrack and try something else.
@@ -308,11 +341,11 @@ The key innovation is **bi-temporal tracking**: distinguishing between when an e
 
 Chrysalis Forge doesn't implement a full temporal knowledge graph (that would be a substantial subsystem), but it applies the temporal principle through its store architecture:
 
-The **context store** (`context-store.rkt`) maintains versioned contexts with timestamps, enabling point-in-time recovery and evolution analysis.
+The **context store** ([`context-store.ts`](../ts/core/stores/context-store.ts)) maintains versioned contexts with timestamps, enabling point-in-time recovery and evolution analysis.
 
-The **trace store** (`trace-store.rkt`) logs all operations with timing information, creating an audit trail for debugging and learning.
+The **trace store** ([`trace-store.ts`](../ts/core/stores/trace-store.ts)) logs all operations with timing information, creating an audit trail for debugging and learning.
 
-The **eval store** (`eval-store.rkt`) tracks task outcomes by profile over time, enabling the system to learn which configurations work best for which task types.
+The **eval store** ([`eval-store.ts`](../ts/core/stores/eval-store.ts)) tracks task outcomes by profile over time, enabling the system to learn which configurations work best for which task types.
 
 ---
 
@@ -324,7 +357,7 @@ The final piece of the theoretical puzzle addresses context management. Even wit
 
 Rather than forcing the model to process everything at once, RLMs give the model control over what it examines. The model can peek at portions of the context, grep for relevant sections, and spawn recursive sub-calls to process chunks—all while keeping its own context window lean.
 
-Chrysalis Forge implements this through the sub-agent system in [`sub-agent.rkt`](../src/core/sub-agent.rkt). Sub-agents are spawned with specific **profiles** that determine their tool access:
+Chrysalis Forge implements this through the sub-agent system in [`decomp-planner.ts`](../ts/core/decomp-planner.ts). Sub-agents are spawned with specific **profiles** that determine their tool access:
 
 - **editor**: File operations (read, write, patch, diff)
 - **researcher**: Search operations (grep, web search, file reading)
@@ -341,10 +374,26 @@ The sub-agent architecture enables parallel execution of independent subtasks. W
 
 Underlying all these techniques is a programming model borrowed from Stanford's DSPy framework. The core insight is that LLM interactions should be treated as typed modules with explicit signatures:
 
-```racket
-(struct SigField (name pred) #:transparent)
-(struct Signature (name ins outs) #:transparent)
-(struct Module (id sig strategy instructions demos params) #:transparent)
+```ts
+export interface SigField {
+  name: string;
+  pred?: (v: unknown) => boolean;
+}
+
+export interface Signature {
+  name: string;
+  ins: SigField[];
+  outs: SigField[];
+}
+
+export interface Module {
+  id: string;
+  sig: Signature;
+  strategy: "predict" | "cot";
+  instructions: string;
+  demos: Example[];
+  params: Record<string, unknown>;
+}
 ```
 
 A `Signature` declares what goes in and what comes out. A `Module` wraps a signature with execution strategy (direct prediction vs. chain-of-thought reasoning), instructions, few-shot demonstrations, and parameters.
@@ -357,40 +406,43 @@ This structure enables several things that ad-hoc prompting doesn't:
 
 **Abstraction**: Users interact with modules, not prompts. The prompt is an implementation detail that can be evolved without changing the interface.
 
-The `run-module` function handles execution:
+The `runModule` function handles execution:
 
-```racket
-(define (run-module m ctx inputs send! #:trace [tr #f] #:cache? [cache? #t])
-  (define target-m 
-    (cond
-      [(Module? m) m]
-      [(ModuleArchive? m)
-       (define prio (Ctx-priority ctx))
-       (cond
-         ;; Symbol priority: use keyword mapping
-         [(and (symbol? prio) (member prio '(cheap fast compact verbose)))
-          (define matching-key 
-            (for/first ([(k v) (in-hash (ModuleArchive-archive m))]
-                        #:when (member prio k))
-              k))
-          (if matching-key 
-              (cdr (hash-ref (ModuleArchive-archive m) matching-key))
-              (cdr (hash-ref (ModuleArchive-archive m) 
-                             (ModuleArchive-default-id m))))]
-         ;; Symbol 'best: use default
-         [(equal? prio 'best)
-          (cdr (hash-ref (ModuleArchive-archive m) 
-                         (ModuleArchive-default-id m)))]
-         ;; String priority: geometric KNN selection
-         [(and (string? prio) (not (null? (ModuleArchive-point-cloud m))))
-          (ensure-selector!)
-          (define target-vec (text->vector-fn prio send!))
-          (select-elite-fn m target-vec)]
-         [else (cdr (hash-ref (ModuleArchive-archive m) 
-                              (ModuleArchive-default-id m)))])]
-      [else (error "Invalid module type")]))
-  ;; ... rest of execution
-  )
+```ts
+function runModule(
+  m: Module | DecompositionArchive,
+  ctx: SessionContext,
+  inputs: Record<string, unknown>,
+  send!: SenderFn,
+  opts?: { trace?: TraceRecord; cache?: boolean }
+): Promise<Record<string, unknown>> {
+  const target = (() => {
+    if ("sig" in m) return m; // plain Module
+    if ("archive" in m) {
+      const prio = ctx.priority;
+      // Keyword profile: use bin mapping
+      if (["cheap", "fast", "compact", "verbose"].includes(prio)) {
+        const matchingKey = Object.keys(m.archive).find((k) =>
+          k.includes(prio as string)
+        );
+        return matchingKey
+          ? m.archive[matchingKey].pattern
+          : m.archive[m.defaultId!].pattern;
+      }
+      // "best" profile: use default
+      if (prio === "best")
+        return m.archive[m.defaultId!].pattern;
+      // String priority: geometric KNN selection
+      if (typeof prio === "string" && m.pointCloud.length > 0) {
+        const { profile } = interpretProfilePhrase(prio);
+        return selectElite(m, targetVector(profile));
+      }
+      return m.archive[m.defaultId!].pattern;
+    }
+    throw new Error("Invalid module type");
+  })();
+  // ... rest of execution
+}
 ```
 
 This code shows the priority-aware selection in action. When passed a `ModuleArchive` rather than a single `Module`, the function examines the context's priority and selects appropriately—keyword fast-path for simple priorities, geometric KNN for natural language.
@@ -437,4 +489,4 @@ The papers cited in this document represent active research directions. For deep
 
 **Recursive LMs**: Zhang et al., "Recursive Language Models" (arXiv:2512.24601, December 2025)
 
-The Chrysalis Forge source code itself serves as executable documentation. Start with [`main.rkt`](../main.rkt) for the entry point, [`src/llm/dspy-core.rkt`](../src/llm/dspy-core.rkt) for core abstractions, and [`src/core/geometric-decomposition.rkt`](../src/core/geometric-decomposition.rkt) for the decomposition system.
+The Chrysalis Forge source code itself serves as executable documentation. Start with [`main.ts`](../ts/cli/main.ts) for the entry point, [`types.ts`](../ts/core/types.ts) for core abstractions, and [`decomp-planner.ts`](../ts/core/decomp-planner.ts) for the decomposition system.

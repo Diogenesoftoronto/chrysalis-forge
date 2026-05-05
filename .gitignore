@@ -13,3 +13,16 @@ compiled/
 
 # Dependency tracking files
 *.dep
+
+# Bun/TypeScript migration scaffold
+node_modules/
+dist/
+.chrysalis/
+.vite/
+.codex
+.sprite
+bun.lock
+data/
+
+# Generated bundled assets (175MB+ — use build:bundle-assets script to regenerate)
+ts/runtime/bundled-assets.generated.ts

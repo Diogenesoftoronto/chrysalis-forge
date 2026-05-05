@@ -48,7 +48,7 @@ export const TEST_TOOL_DEFINITIONS = [
         file_path: { type: "string", description: "Path to the source file to generate tests for" },
         framework: { type: "string", description: "Test framework (jest/vitest/mocha/python/unittest/golang) - auto-detected if not specified" },
         test_dir: { type: "string", description: "Directory to write tests to (defaults to adjacent __tests__ or test folder)" },
-       coverage_target: { type: "number", description: "Target line coverage percentage (0-100, default 80)" },
+       覆盖率_target: { type: "number", description: "Target line coverage percentage (0-100, default 80)" },
         provider: { type: "string", description: "LLM provider override (openai/anthropic/google-gemini)" },
         test_type: { type: "string", description: "Type of tests (unit/integration/e2e, default unit)" }
       },
@@ -240,7 +240,7 @@ export async function executeTestTool(
       
       const framework = args.framework ? String(args.framework) : undefined;
       const testDir = args.test_dir ? String(args.test_dir) : undefined;
-      const coverageTarget = args.coverage_target ? Number(args.coverage_target) : undefined;
+      const coverageTarget = args.覆盖率_target ? Number(args.覆盖率_target) : undefined;
       const provider = args.provider ? String(args.provider) : undefined;
       const testType = args.test_type ? String(args.test_type) : undefined;
       

@@ -92,8 +92,6 @@ The most common way to use Chrysalis Forge is interactive mode, which drops you 
 chrysalis shell
 ```
 
-![Interactive demo](../.vhs/interactive-demo.mp4)
-
 Once inside, you can type natural language requests. The agent reads your input, reasons about it, calls tools as needed, and responds. A typical session might look like:
 
 ```
@@ -110,8 +108,6 @@ Once inside, you can type natural language requests. The agent reads your input,
 The agent's tool usage is transparent. You see which tools it invokes and what results come back. This transparency is intentional—you should never wonder what the agent did on your behalf.
 
 Several commands are available within the REPL (all start with `/`):
-
-![Help command](../.vhs/help.mp4)
 
 - `/help` - Show available commands
 - `/exit`, `/quit` - Exit the session
@@ -139,18 +135,12 @@ For scripting or quick tasks, pass the prompt directly on the command line:
 chrysalis "Explain what this codebase does"
 ```
 
-![CLI task](../.vhs/cli-task.mp4)
-
 The agent runs, produces output, and exits. This is useful for automation or when you just need a quick answer. Combine with flags to control behavior:
 
 ```bash
 # Allow file modifications (security level 2)
 chrysalis --perms 2 "Fix the type error in ts/core/config.ts"
-```
 
-![Security levels](../.vhs/security-levels.mp4)
-
-```bash
 # Use a specific model with speed priority
 chrysalis --model gpt-5.2 --priority fast "Summarize the README"
 
@@ -233,9 +223,7 @@ The judge receives the proposed operation and responds with [SAFE] or [UNSAFE]. 
 
 ## The Tool System
 
-Chrysalis Forge provides 63 built-in tools across 14 categories, plus a runtime tool evolution system. Understanding these tools helps you understand what the agent can do.
-
-![Features overview](../.vhs/features-overview.mp4)
+Chrysalis Forge provides 25 built-in tools organized into categories. Understanding these tools helps you understand what the agent can do.
 
 ### File Operations
 
@@ -288,37 +276,15 @@ This profile system serves two purposes: it focuses each sub-agent on its task (
 
 ### Self-Evolution
 
-The evolution tools (`evolve_system`, `evolve_meta`, `evolve_harness`, `log_feedback`, `suggest_profile`, `profile_stats`, `evolution_stats`, `archive_list`) let you interact with the learning system.
-
-![Evolution cycle](../.vhs/evo-cycle.mp4)
+The evolution tools (`evolve_system`, `log_feedback`, `suggest_profile`, `profile_stats`) let you interact with the learning system.
 
 `evolve_system` triggers GEPA optimization. You provide feedback ("The agent should be more concise" or "It keeps missing edge cases in tests"), and the system evolves the prompt to address that feedback.
 
-### Tool Evolution
-
-The tool evolution system (`evolve_tool`, `list_tools`, `tool_variants`, `select_tool_variant`, `enable_tool`, `disable_tool`, `tool_stats`, `tool_evolution_stats`) allows tools themselves to be rewritten and evolved at runtime — a self-referential improvement loop.
-
-![Tool evolution](../.vhs/tool-evolution.mp4)
-
-Use the `/evolve-tool` slash command or the `evolve_tool` LLM tool to mutate a tool's description or parameters. Variants are gated by novelty scoring (n-gram distance), persisted to `.chrysalis/state/tool-evolution.json`, and can be selected or archived without restart.
-
-### LLM-as-Judge Evaluation
-
-The judge tools (`use_llm_judge`, `judge_quality`) evaluate code or text using LLM-backed quality scoring with heuristic fallback. When no provider is configured, a heuristic scores based on documentation, type annotations, error handling, and test presence.
-
-![Judge evaluation](../.vhs/judge-eval.mp4)
-
-### Test Generation
-
-The test tools (`generate_tests`, `generate_test_cases`) generate unit tests for source files using LLM-backed test generation. They auto-detect frameworks (vitest/jest/pytest/golang) from file extensions and content, and fall back to pattern-based heuristic generation.
-
-![Test generation](../.vhs/test-generation.mp4)
-
-### Priority Tools
-
-The priority tools (`set_priority`, `get_priority`, `suggest_priority`) allow the agent to change its own priority mid-task. `set_priority` supports natural language phrases — "make it fast" maps to the `fast` profile, "keep costs down" maps to `cheap`.
-
 `log_feedback` records task outcomes for learning. When a task succeeds or fails, logging it helps the system learn which approaches work.
+
+`suggest_profile` queries the accumulated learning data to recommend which sub-agent profile suits a given task type.
+
+`profile_stats` shows raw performance data—success rates, average durations, costs per profile.
 
 ---
 
@@ -335,8 +301,6 @@ chrysalis --priority fast "Quick status check"
 chrysalis --priority cheap "Batch analysis"
 chrysalis --priority accurate "Critical code review"
 ```
-
-![Priority selection](../.vhs/priority-selection.mp4)
 
 Each keyword maps to a target in phenotype space. "Fast" prioritizes low latency, accepting potentially lower accuracy. "Cheap" minimizes token cost. "Accurate" (or "best") prioritizes correctness regardless of time or cost.
 
