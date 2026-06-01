@@ -21,9 +21,9 @@ export default function Chat() {
   );
 
   return (
-    <section className="flex h-[calc(100vh-10rem)] flex-col gap-3">
+    <section className="mx-auto flex h-[calc(100vh-7rem)] max-w-[1140px] flex-col gap-3 px-4 py-8">
       <div className="flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+        <label className="flex items-center gap-2 text-sm text-dim">
           Task prompt
           <Select
             value={promptId}
@@ -47,7 +47,7 @@ export default function Chat() {
           </span>
         )}
       </div>
-      <div className="flex-1 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex-1 overflow-hidden border border-border bg-bg2">
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadView />
         </AssistantRuntimeProvider>

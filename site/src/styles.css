@@ -5,6 +5,26 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --bg: #080810;
+    --bg2: #0f0f1a;
+    --bg3: #141421;
+    --card: #181828;
+    --gold: #f7c500;
+    --teal: #00e5b4;
+    --orange: #ff6b00;
+    --purple: #b44dff;
+    --red: #ff4040;
+    --text: #e8e8f0;
+    --dim: #888899;
+    --border: #252535;
+    --border2: #353550;
+    --green: #7bed9f;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --sans: 'Space Grotesk', system-ui, sans-serif;
+    --display: 'Bebas Neue', Impact, sans-serif;
+  }
+  html {
+    scroll-behavior: smooth;
   }
   html,
   body,
@@ -12,10 +32,123 @@
     @apply min-h-full bg-background text-foreground antialiased;
   }
   body {
-    font-family:
-      system-ui,
-      -apple-system,
-      "Segoe UI",
-      sans-serif;
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.65;
+    overflow-x: hidden;
+  }
+  a {
+    color: var(--teal);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+  code {
+    font-family: var(--mono);
+  }
+  strong {
+    color: var(--gold);
+    font-weight: 600;
+  }
+  ::selection {
+    background: var(--gold);
+    color: var(--bg);
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border2);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--dim);
+  }
+  :focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition:
+      opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .reveal.revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .reveal-left {
+    opacity: 0;
+    transform: translateX(-40px);
+    transition:
+      opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .reveal-left.revealed {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .reveal-right {
+    opacity: 0;
+    transform: translateX(40px);
+    transition:
+      opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .reveal-right.revealed {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .bg-grid {
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 60px 60px;
+    background-position: center top;
+  }
+  .bg-dots {
+    background-image: radial-gradient(circle, var(--border2) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .bg-gradient-radial {
+    background: radial-gradient(ellipse at 50% 0%, rgba(0,229,180,0.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 10%, rgba(247,197,0,0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 10% 80%, rgba(180,77,255,0.04) 0%, transparent 50%);
+  }
+  .hover-lift {
+    transition:
+      transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+    border-color: var(--border2);
+  }
+  .hover-glow:hover {
+    box-shadow: 0 0 20px 2px rgba(0,229,180,0.12);
+    border-color: rgba(0,229,180,0.3);
+  }
+  .hover-glow-gold:hover {
+    box-shadow: 0 0 20px 2px rgba(247,197,0,0.12);
+    border-color: rgba(247,197,0,0.3);
+  }
+  .hover-glow-purple:hover {
+    box-shadow: 0 0 20px 2px rgba(180,77,255,0.12);
+    border-color: rgba(180,77,255,0.3);
+  }
+  .hover-glow-red:hover {
+    box-shadow: 0 0 20px 2px rgba(255,64,64,0.12);
+    border-color: rgba(255,64,64,0.3);
   }
 }

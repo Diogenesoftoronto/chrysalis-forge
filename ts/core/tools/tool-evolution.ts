@@ -3,13 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ToolDefinition, type ToolExecutor } from "./tool-registry.js";
 import { slugify } from "../util.js";
-
-interface ProviderConfig {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseURL?: string;
-}
+import { type ProviderConfig } from "../types.js";
 
 function resolveProviderConfig(preferredProvider?: string): ProviderConfig | null {
   const configs: Record<string, ProviderConfig | null> = {

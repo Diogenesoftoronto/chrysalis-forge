@@ -17,19 +17,20 @@ Chrysalis Forge is a TypeScript-based environment for building and optimizing au
 - **MAP-Elites Optimization**: Evolutionary optimization targeting cost, latency, and token efficiency.
 - **Grounded Scoring**: Automated grading based on precision, speed ($/ms), and resource consumption.
 - **Tiered Sandboxing**: Four levels of security isolation for code execution.
-- **66+ Built-in Tools**: File operations, code search, git, jj (Jujutsu), web search, test generation, LLM-as-judge evaluation, and self-evolution.
+- **40 Built-in Core Tools**: File operations, code search, git, test generation, LLM-as-judge evaluation, and self-evolution.
 - **Evolvable Tool System**: Tools themselves can be evolved at runtime via feedback-driven mutation with novelty gating and variant archiving.
-- **Parallel Sub-Agents**: Spawn concurrent tasks with specialized tool profiles.
+- **Modular Extensions**: Optional packages for VCS (Jujutsu), web, RDF, caching, and concurrent sub-agents.
 - **Auto-Correction Loop**: Retry failed code execution with automatic fixes.
-- **Vector Memory & RDF**: Semantic search and knowledge graph integration.
 - **Dynamic Stores**: Key-value, log, set, and counter stores for persistent agent state.
 - **File Rollback**: Automatic file versioning with instant undo.
 
 ## Tool Categories
 
-The LLM agent can directly call these tools. Each tool is registered with the Pi runtime and available in every session.
+The LLM agent can directly call these tools. Core tools are always available; optional tools ship as separate packages.
 
-### File & Code Tools (Pi built-in)
+### Core Tools (always available)
+
+#### File & Code Tools (Pi built-in)
 | Tool | Description |
 |------|-------------|
 | `read` | Read file contents |
@@ -40,7 +41,7 @@ The LLM agent can directly call these tools. Each tool is registered with the Pi
 | `find` | Find files by name/pattern |
 | `ls` | Directory listing |
 
-### Git Tools
+#### VCS Tools
 | Tool | Description |
 |------|-------------|
 | `git_status` | Repository status |
@@ -51,30 +52,7 @@ The LLM agent can directly call these tools. Each tool is registered with the Pi
 | `git_add` | Stage files |
 | `git_branch` | List/create/delete branches |
 
-### Jujutsu (jj) Tools
-| Tool | Description |
-|------|-------------|
-| `jj_status` | Current state |
-| `jj_log` | Commit graph |
-| `jj_diff` | Show changes |
-| `jj_undo` | Undo last operation |
-| `jj_op_log` | Operation history |
-| `jj_op_restore` | Restore to any past state |
-| `jj_workspace_add` | Create parallel worktree |
-| `jj_workspace_list` | List workspaces |
-| `jj_describe` | Set commit message |
-| `jj_new` | Create new change |
-
-### Sub-Agent Tools
-| Tool | Description |
-|------|-------------|
-| `spawn_task` | Spawn parallel sub-agent with profile |
-| `await_task` | Wait for sub-agent completion |
-| `task_status` | Check sub-agent status |
-
-**Profiles**: `editor`, `researcher`, `vcs`, `all`
-
-### Self-Evolution Tools
+#### Self-Evolution Tools
 | Tool | Description |
 |------|-------------|
 | `evolve_system` | Evolve system prompt via GEPA mutation |
@@ -86,33 +64,33 @@ The LLM agent can directly call these tools. Each tool is registered with the Pi
 | `archive_list` | List MAP-Elites archived variants |
 | `evolution_stats` | Current evolution state summary |
 
-### Decomposition Tools
+#### Decomposition Tools
 | Tool | Description |
 |------|-------------|
 | `decompose_task` | Break task into subtasks with dependencies |
 | `classify_task` | Classify task type (refactor/debug/implement/etc.) |
 | `decomp_vote` | First-to-K voting on decomposition alternatives |
 
-### Judge & Evaluation Tools
+#### Judge & Evaluation Tools
 | Tool | Description |
 |------|-------------|
 | `use_llm_judge` | Evaluate code/text using LLM-as-judge with configurable criteria and pass/fail threshold |
 | `judge_quality` | Judge code quality across correctness, maintainability, and best practices |
 
-### Test Generation Tools
+#### Test Generation Tools
 | Tool | Description |
 |------|-------------|
 | `generate_tests` | Generate unit tests from source files using LLM with framework auto-detection |
 | `generate_test_cases` | Generate specific test cases for a function with concrete inputs/outputs |
 
-### Priority & Profile Tools
+#### Priority & Profile Tools
 | Tool | Description |
 |------|-------------|
 | `set_priority` | Set execution profile (fast/cheap/best/verbose) with reason tracking |
 | `get_priority` | Get current active execution profile |
 | `suggest_priority` | Suggest optimal profile based on task description or type |
 
-### Tool Evolution Tools
+#### Tool Evolution Tools
 | Tool | Description |
 |------|-------------|
 | `evolve_tool` | Evolve a tool's description/parameters via feedback-driven mutation |
@@ -124,22 +102,7 @@ The LLM agent can directly call these tools. Each tool is registered with the Pi
 | `tool_stats` | Get tool registry statistics |
 | `tool_evolution_stats` | Get tool evolution state and variant counts |
 
-### RDF & Memory Tools
-| Tool | Description |
-|------|-------------|
-| `rdf_load` | Load triples file into a named graph |
-| `rdf_query` | Query knowledge graph with pattern matching |
-| `rdf_insert` | Insert a triple into the store |
-
-### Web Tools
-| Tool | Description |
-|------|-------------|
-| `web_fetch` | Fetch URL content (cached) |
-| `web_search` | Exa AI semantic search |
-
-**Requires**: `EXA_API_KEY` env var for Exa web search.
-
-### Store Tools
+#### Store Tools
 | Tool | Description |
 |------|-------------|
 | `store_create` | Create kv/log/set/counter store |
@@ -150,17 +113,25 @@ The LLM agent can directly call these tools. Each tool is registered with the Pi
 | `store_dump` | Dump entire store contents |
 | `store_delete` | Delete a store |
 
-### Rollback & Cache Tools
+#### Rollback Tools
 | Tool | Description |
 |------|-------------|
 | `file_rollback` | Restore file to previous version |
 | `file_rollback_list` | List available rollback versions |
-| `cache_get` | Retrieve cached value |
-| `cache_set` | Store value with TTL and tags |
-| `cache_invalidate` | Remove cached entry |
-| `cache_invalidate_tag` | Remove entries by tag |
-| `cache_stats` | Cache statistics |
-| `cache_cleanup` | Remove expired entries |
+
+### Optional Packages
+
+Install separately to extend the tool surface:
+
+| Package | Tools | Install |
+|---------|-------|---------|
+| `@chrysalis/vcs-jj` | 10 Jujutsu VCS tools | `npm i -g @chrysalis/vcs-jj` |
+| `@chrysalis/concurrent` | 3 sub-agent tools (spawn/await/status) | `npm i -g @chrysalis/concurrent` |
+| `@chrysalis/web` | 2 tools (web_fetch, web_search) | `npm i -g @chrysalis/web` |
+| `@chrysalis/cache` | 6 tools (cache_get, cache_set, etc.) | `npm i -g @chrysalis/cache` |
+| `@chrysalis/rdf` | 3 tools (rdf_load, rdf_query, rdf_insert) + vector search | `npm i -g @chrysalis/rdf` |
+
+**Note**: `@chrysalis/web` depends on `@chrysalis/cache`. The `rdf` package includes vector similarity search (`vectorAdd`, `vectorSearch`).
 
 ## Installation
 

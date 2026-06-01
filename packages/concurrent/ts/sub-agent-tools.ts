@@ -1,11 +1,6 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { resolve, join } from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { ensureChrysalisDirs, stateDir } from "../paths.js";
-
-const execFileAsync = promisify(execFile);
+import { join, resolve } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 
 interface SubTask {
   id: string;
@@ -19,8 +14,16 @@ interface SubTask {
   finishedAt?: number;
 }
 
+function stateDir(cwd: string, rootName = ".chrysalis"): string {
+  return join(resolve(cwd, rootName), "state");
+}
+
+async function ensureStateDir(cwd: string, rootName = ".chrysalis"): Promise<void> {
+  await mkdir(stateDir(cwd, rootName), { recursive: true });
+}
+
 async function loadTasks(cwd: string): Promise<Record<string, SubTask>> {
-  await ensureChrysalisDirs(cwd);
+  await ensureStateDir(cwd);
   const path = join(stateDir(cwd), "sub-tasks.json");
   try {
     return JSON.parse(await readFile(path, "utf8"));
@@ -30,7 +33,7 @@ async function loadTasks(cwd: string): Promise<Record<string, SubTask>> {
 }
 
 async function saveTasks(cwd: string, tasks: Record<string, SubTask>): Promise<void> {
-  await ensureChrysalisDirs(cwd);
+  await ensureStateDir(cwd);
   const path = join(stateDir(cwd), "sub-tasks.json");
   await writeFile(path, `${JSON.stringify(tasks, null, 2)}\n`, "utf8");
 }

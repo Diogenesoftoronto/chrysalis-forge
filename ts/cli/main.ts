@@ -20,10 +20,8 @@ import { loadSessionStats, getSessionStatsDisplay, formatTokens, formatCost } fr
 import { sessionList, sessionListWithMetadata, sessionCreate, sessionSwitch, sessionDelete, sessionGetActive } from "../core/stores/context-store.js";
 import { threadList, threadCreate, threadSwitch, threadFind, threadContinue, threadSpawnChild, threadGetActive, threadGetRelations } from "../core/stores/thread-store.js";
 import { fileBackup, fileRollback, fileRollbackList, rollbackHistorySize } from "../core/stores/rollback-store.js";
-import { cacheStats, cacheCleanup } from "../core/stores/cache-store.js";
 import { getProfileStats, getToolStats, suggestProfile as suggestEvalProfile } from "../core/stores/eval-store.js";
 import { listArchives, archiveStats } from "../core/stores/decomp-archive.js";
-import { executeRdfTool } from "../core/tools/rdf-tools.js";
 import { classifyTask, decomposeTaskLLM, heuristicDecomposition, runDecomposition, shouldVote } from "../core/decomp-planner.js";
 import { selectPatternForPriority, selectOrDecompose } from "../core/decomp-selector.js";
 import { STAKES_PRESETS, selectStakes } from "../core/decomp-voter.js";
@@ -44,10 +42,7 @@ function usage(): void {
   sessions [name]            List sessions or switch to one
   threads [id]               List threads or switch to one
   rollback <path> [steps]     Rollback a file (default: 1 step)
-  cache-stats                 Show cache statistics
-  rdf-load <path> <id>        Load triples into an RDF graph
-  rdf-query <query> [id]      Query the RDF knowledge graph
-  rdf-insert <s> <p> <o> [g] Insert a triple into the RDF store
+
   stores [subcommand] ...    List or manage dynamic stores
     stores                    List dynamic stores
     stores create <n> <kind> Create a store (kv|log|set|counter)
@@ -193,33 +188,6 @@ async function run(): Promise<void> {
       console.log(result.ok ? `OK: ${result.message}` : `FAIL: ${result.message}`);
       return;
     }
-    case "cache-stats": {
-      await ensureProjectScaffold(cwd);
-      const stats = await cacheStats(cwd);
-      console.log(`total=${stats.total} valid=${stats.valid} expired=${stats.expired}`);
-      return;
-    }
-    case "rdf-load": {
-      await ensureProjectScaffold(cwd);
-      const [path, id] = args;
-      if (!path || !id) throw new Error("rdf-load requires <path> <id>.");
-      console.log(await executeRdfTool(cwd, "rdf_load", { path, id }));
-      return;
-    }
-    case "rdf-query": {
-      await ensureProjectScaffold(cwd);
-      const query = args.join(" ").trim();
-      if (!query) throw new Error("rdf-query requires a query string.");
-      console.log(await executeRdfTool(cwd, "rdf_query", { query }));
-      return;
-    }
-    case "rdf-insert": {
-      await ensureProjectScaffold(cwd);
-      const [subject, predicate, object, graph] = args;
-      if (!subject || !predicate || !object) throw new Error("rdf-insert requires <subject> <predicate> <object> [graph].");
-      console.log(await executeRdfTool(cwd, "rdf_insert", { subject, predicate, object, graph: graph ?? "default" }));
-      return;
-    }
     case "stores": {
       await ensureProjectScaffold(cwd);
       const sub = args[0];
@@ -289,8 +257,6 @@ async function run(): Promise<void> {
       const sessionStats = await loadSessionStats(cwd);
       const display = getSessionStatsDisplay(sessionStats);
       console.log(`session_turns=${display.turns} tokens=${formatTokens(Number(display.totalTokens))} cost=${formatCost(Number(display.totalCost))}`);
-      const cacheStat = await cacheStats(cwd);
-      console.log(`cache_total=${cacheStat.total} cache_valid=${cacheStat.valid}`);
       console.log(`pi_standalone=${runtime.standalone ? runtime.standalone.command : "missing"}`);
       console.log(`pi_embedded=${runtime.embedded ? runtime.embedded.cliPath ?? runtime.embedded.command : "missing"}`);
       console.log(`pi_selected=${runtime.selected ? runtime.selected.kind : "missing"}`);

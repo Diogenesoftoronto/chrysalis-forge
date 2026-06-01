@@ -1,6 +1,9 @@
-import { relative } from "node:path";
+import { relative, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { loadConfig } from "../core/config.js";
 import {
   evolveHarnessStrategy,
   evolveMetaPrompt,
@@ -14,30 +17,21 @@ import {
 import { listArtifacts, loadProfileState, saveProfileState, writeTaskPlanArtifact } from "../core/project.js";
 import { evolutionMetaPromptPath, evolutionSystemPromptPath } from "../core/paths.js";
 import { interpretProfilePhrase } from "../core/priority.js";
-import { getSessionStatsDisplay, loadSessionStats } from "../core/stores/session-stats.js";
 import { sessionList, sessionSwitch } from "../core/stores/context-store.js";
 import { threadList, threadSwitch } from "../core/stores/thread-store.js";
 import { fileRollback } from "../core/stores/rollback-store.js";
-import { cacheStats } from "../core/stores/cache-store.js";
-import { executeRdfTool } from "../core/tools/rdf-tools.js";
 import { classifyTask, runDecomposition } from "../core/decomp-planner.js";
-import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump, storeDescribe } from "../core/stores/store-registry.js";
+import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump } from "../core/stores/store-registry.js";
 import { EVOLUTION_TOOL_DEFINITIONS, executeEvolutionTool } from "../core/tools/evolution-tools.js";
 import { GIT_TOOL_DEFINITIONS, executeGitTool } from "../core/tools/git-tools.js";
-import { JJ_TOOL_DEFINITIONS, executeJjTool } from "../core/tools/jj-tools.js";
-import { WEB_TOOL_DEFINITIONS, executeWebTool } from "../core/tools/web-tools.js";
-import { SUB_AGENT_TOOL_DEFINITIONS, executeSubAgentTool } from "../core/tools/sub-agent-tools.js";
 import { STORE_TOOL_DEFINITIONS, executeStoreTool } from "../core/tools/store-tools.js";
 import { ROLLBACK_TOOL_DEFINITIONS, executeRollbackTool } from "../core/tools/rollback-tools.js";
-import { CACHE_TOOL_DEFINITIONS, executeCacheTool } from "../core/tools/cache-tools.js";
 import { DECOMP_TOOL_DEFINITIONS, executeDecompTool } from "../core/tools/decomp-tools.js";
-import { RDF_TOOL_DEFINITIONS } from "../core/tools/rdf-tools.js";
 import { JUDGE_TOOL_DEFINITIONS, executeJudgeTool } from "../core/tools/judge-tools.js";
 import { TEST_TOOL_DEFINITIONS, executeTestTool } from "../core/tools/test-tools.js";
 import { PRIORITY_TOOL_DEFINITIONS, executePriorityTool } from "../core/tools/priority-tools.js";
 import { EVOLVER_TOOL_DEFINITIONS, executeEvolverTool } from "../core/tools/evolver-tools.js";
 import { globalToolRegistry } from "../core/tools/tool-registry.js";
-import { listToolVariants } from "../core/tools/tool-evolution.js";
 
 const CHRYSALIS_VERSION = "0.4.0";
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
@@ -88,11 +82,7 @@ const CHRYSALIS_COMMAND_SECTIONS = [
   {
     title: "Recovery",
     commands: [
-      { usage: "/rollback <path>", description: "Restore a file from backup history." },
-      { usage: "/cache-stats", description: "Show web cache statistics." },
-      { usage: "/rdf-load", description: "Load triples into the RDF graph." },
-      { usage: "/rdf-query <query>", description: "Query RDF knowledge." },
-      { usage: "/rdf-insert ...", description: "Insert a triple into the RDF store." }
+      { usage: "/rollback <path>", description: "Restore a file from backup history." }
     ]
   }
 ];
@@ -197,24 +187,91 @@ function textFromArgs(args: string | string[]): string {
   return (Array.isArray(args) ? args.join(" ") : String(args ?? "")).trim();
 }
 
-const ALL_TOOL_GROUPS: Array<{
+interface ToolGroup {
   definitions: Array<{ name: string; description: string; parameters: any }>;
   execute: (cwd: string, name: string, args: Record<string, unknown>) => Promise<string>;
-}> = [
+}
+
+const CORE_TOOL_GROUPS: ToolGroup[] = [
   { definitions: EVOLUTION_TOOL_DEFINITIONS, execute: executeEvolutionTool },
   { definitions: GIT_TOOL_DEFINITIONS, execute: executeGitTool },
-  { definitions: JJ_TOOL_DEFINITIONS, execute: executeJjTool },
-  { definitions: WEB_TOOL_DEFINITIONS, execute: executeWebTool },
-  { definitions: SUB_AGENT_TOOL_DEFINITIONS, execute: executeSubAgentTool },
   { definitions: STORE_TOOL_DEFINITIONS, execute: executeStoreTool },
   { definitions: ROLLBACK_TOOL_DEFINITIONS, execute: executeRollbackTool },
-  { definitions: CACHE_TOOL_DEFINITIONS, execute: executeCacheTool },
-  { definitions: RDF_TOOL_DEFINITIONS, execute: executeRdfTool },
   { definitions: DECOMP_TOOL_DEFINITIONS, execute: executeDecompTool },
   { definitions: JUDGE_TOOL_DEFINITIONS, execute: executeJudgeTool },
   { definitions: TEST_TOOL_DEFINITIONS, execute: executeTestTool },
   { definitions: PRIORITY_TOOL_DEFINITIONS, execute: executePriorityTool },
   { definitions: EVOLVER_TOOL_DEFINITIONS, execute: executeEvolverTool }
+];
+
+// Optional `@chrysalis/*` tool packages. Each maps to a directory under
+// `packages/` (for monorepo/local use) and is resolvable as a bare npm
+// specifier once installed separately.
+const OPTIONAL_EXTENSION_DIRS: Record<string, string> = {
+  "@chrysalis/vcs-jj": "vcs-jj",
+  "@chrysalis/web": "web",
+  "@chrysalis/cache": "cache",
+  "@chrysalis/rdf": "rdf",
+  "@chrysalis/concurrent": "concurrent"
+};
+
+/** Walk up from this module to the repo root that contains `packages/`. */
+function findPackagesRoot(): string | null {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i += 1) {
+    if (existsSync(join(dir, "packages"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Import an optional extension by name, trying local `packages/` then npm. */
+async function importExtension(name: string): Promise<any | null> {
+  const subdir = OPTIONAL_EXTENSION_DIRS[name];
+  const root = findPackagesRoot();
+  if (subdir && root) {
+    const candidates = [
+      join(root, "packages", subdir, "dist", "index.js"),
+      join(root, "packages", subdir, "ts", "index.ts")
+    ];
+    for (const file of candidates) {
+      if (existsSync(file)) return import(pathToFileURL(file).href);
+    }
+  }
+  // Fall back to bare-specifier resolution (separately installed package).
+  try {
+    return await import(name);
+  } catch {
+    return null;
+  }
+}
+
+async function loadOptionalToolGroups(cwd: string): Promise<ToolGroup[]> {
+  let extensions: string[] = [];
+  try {
+    extensions = (await loadConfig(cwd)).extensions;
+  } catch {
+    return [];
+  }
+  const groups: ToolGroup[] = [];
+  for (const name of extensions) {
+    try {
+      const mod = await importExtension(name);
+      if (mod?.toolGroup?.definitions && typeof mod.toolGroup.execute === "function") {
+        groups.push(mod.toolGroup as ToolGroup);
+      }
+    } catch {
+      // A missing/broken optional package must never break the core agent.
+    }
+  }
+  return groups;
+}
+
+const ALL_TOOL_GROUPS: ToolGroup[] = [
+  ...CORE_TOOL_GROUPS,
+  ...(await loadOptionalToolGroups(process.cwd()))
 ];
 
 function registerToolGroup(pi: any, group: typeof ALL_TOOL_GROUPS[number]): void {
@@ -572,55 +629,6 @@ export default function chrysalisExtension(pi: any): void {
       const steps = parts[1] ? parseInt(parts[1], 10) : 1;
       const result = await fileRollback(ctx.cwd, path, steps);
       notify(ctx, result.ok ? `OK: ${result.message}` : `FAIL: ${result.message}`);
-    }
-  });
-
-  pi.registerCommand("cache-stats", {
-    description: "Show web cache statistics.",
-    handler: async (_args: string[], ctx: any) => {
-      const stats = await cacheStats(ctx.cwd);
-      notify(ctx, `cache: total=${stats.total} valid=${stats.valid} expired=${stats.expired}`);
-    }
-  });
-
-  pi.registerCommand("rdf-load", {
-    description: "Load N-triples file into an RDF named graph.",
-    handler: async (args: string[], ctx: any) => {
-      const parts = (Array.isArray(args) ? args : String(args ?? "").split(/\s+/));
-      const [path, id] = parts;
-      if (!path || !id) {
-        notify(ctx, "Usage: /rdf-load <path> <id>");
-        return;
-      }
-      const result = await executeRdfTool(ctx.cwd, "rdf_load", { path, id });
-      notify(ctx, String(result));
-    }
-  });
-
-  pi.registerCommand("rdf-query", {
-    description: "Query the RDF knowledge graph.",
-    handler: async (args: string[], ctx: any) => {
-      const query = textFromArgs(args);
-      if (!query) {
-        notify(ctx, "Usage: /rdf-query <query>");
-        return;
-      }
-      const result = await executeRdfTool(ctx.cwd, "rdf_query", { query });
-      notify(ctx, String(result));
-    }
-  });
-
-  pi.registerCommand("rdf-insert", {
-    description: "Insert a triple into the RDF store.",
-    handler: async (args: string[], ctx: any) => {
-      const parts = (Array.isArray(args) ? args : String(args ?? "").split(/\s+/));
-      const [subject, predicate, object, graph] = parts;
-      if (!subject || !predicate || !object) {
-        notify(ctx, "Usage: /rdf-insert <subject> <predicate> <object> [graph]");
-        return;
-      }
-      const result = await executeRdfTool(ctx.cwd, "rdf_insert", { subject, predicate, object, graph: graph ?? "default" });
-      notify(ctx, String(result));
     }
   });
 

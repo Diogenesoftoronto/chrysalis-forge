@@ -1,8 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
-import { ensureChrysalisDirs, vectorStorePath } from "../paths.js";
-import { type VectorEntry } from "../types.js";
+import type { VectorEntry } from "./types.js";
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, magA = 0, magB = 0;
@@ -27,13 +27,21 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function vectorStorePath(cwd: string, rootName = ".chrysalis"): string {
+  return join(resolve(cwd, rootName), "state", "vectors.json");
+}
+
+async function ensureVectorDir(cwd: string, rootName = ".chrysalis"): Promise<void> {
+  await mkdir(join(resolve(cwd, rootName), "state"), { recursive: true });
+}
+
 async function loadDB(cwd: string): Promise<Record<string, VectorEntry>> {
-  await ensureChrysalisDirs(cwd);
-  return readJsonFile(vectorStorePath(cwd), {});
+  await ensureVectorDir(cwd);
+  return readJsonFile<Record<string, VectorEntry>>(vectorStorePath(cwd), {});
 }
 
 async function saveDB(cwd: string, db: Record<string, VectorEntry>): Promise<void> {
-  await ensureChrysalisDirs(cwd);
+  await ensureVectorDir(cwd);
   await writeJsonFile(vectorStorePath(cwd), db);
 }
 

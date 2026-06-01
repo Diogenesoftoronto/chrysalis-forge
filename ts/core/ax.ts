@@ -3,14 +3,7 @@ import { ai, ax } from "@ax-llm/ax";
 import { chooseExecutionModel, loadEvolutionState } from "./evolution.js";
 import { interpretProfilePhrase } from "./priority.js";
 import { dedupe } from "./util.js";
-import { type ChrysalisProfile, type ChrysalisTaskType, type TaskPlan } from "./types.js";
-
-interface ProviderConfig {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseURL?: string;
-}
+import { type ChrysalisProfile, type ChrysalisTaskType, type TaskPlan, type ProviderConfig } from "./types.js";
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

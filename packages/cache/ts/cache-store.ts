@@ -1,8 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 
-import { ensureChrysalisDirs, cacheStorePath } from "../paths.js";
-import { type CacheEntry, type CacheStats } from "../types.js";
+import { ensureCacheDir, cacheStorePath } from "./paths.js";
+import type { CacheEntry, CacheStats } from "./types.js";
 
 const DEFAULT_TTL = 86400;
 const MAX_TTL = 604800;
@@ -24,12 +23,12 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
 }
 
 async function loadCache(cwd: string): Promise<Record<string, CacheEntry>> {
-  await ensureChrysalisDirs(cwd);
-  return readJsonFile(cacheStorePath(cwd), {});
+  await ensureCacheDir(cwd);
+  return readJsonFile<Record<string, CacheEntry>>(cacheStorePath(cwd), {});
 }
 
 async function saveCache(cwd: string, cache: Record<string, CacheEntry>): Promise<void> {
-  await ensureChrysalisDirs(cwd);
+  await ensureCacheDir(cwd);
   await writeJsonFile(cacheStorePath(cwd), cache);
 }
 

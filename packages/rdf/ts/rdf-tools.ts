@@ -1,4 +1,4 @@
-import { rdfLoad, rdfQuery, rdfInsert } from "../stores/rdf-store.js";
+import { rdfLoad, rdfQuery, rdfInsert } from "./rdf-store.js";
 
 export const RDF_TOOL_DEFINITIONS = [
   {

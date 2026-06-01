@@ -1,15 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
-import { ensureChrysalisDirs, rdfDbPath } from "../paths.js";
-
-export interface Triple {
-  subject: string;
-  predicate: string;
-  object: string;
-  graph: string;
-  timestamp: number;
-}
+import { ensureRdfDir, rdfDbPath } from "./paths.js";
+import type { Triple } from "./types.js";
 
 async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -24,12 +17,12 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
 }
 
 async function loadTriples(cwd: string): Promise<Triple[]> {
-  await ensureChrysalisDirs(cwd);
+  await ensureRdfDir(cwd);
   return readJsonFile<Triple[]>(rdfDbPath(cwd), []);
 }
 
 async function saveTriples(cwd: string, triples: Triple[]): Promise<void> {
-  await ensureChrysalisDirs(cwd);
+  await ensureRdfDir(cwd);
   await writeJsonFile(rdfDbPath(cwd), triples);
 }
 

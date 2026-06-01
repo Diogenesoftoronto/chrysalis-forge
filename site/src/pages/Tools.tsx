@@ -1,6 +1,3 @@
-import { useStyletron } from "baseui";
-import { Card } from "baseui/card";
-import { HeadingLarge, HeadingMedium, ParagraphSmall } from "baseui/typography";
 import { InlineCode } from "../components/MarkdownBody";
 
 interface ToolGroup {
@@ -164,132 +161,107 @@ const TOOL_GROUPS: ToolGroup[] = [
 
 const totalTools = TOOL_GROUPS.reduce((n, g) => n + g.tools.length, 0);
 
-export default function Tools() {
-  const [css, theme] = useStyletron();
-
-  const grid = css({
-    display: "grid",
-    gap: theme.sizing.scale600,
-    [theme.mediaQuery.medium]: {
-      gridTemplateColumns: "repeat(2, 1fr)",
-    },
-  });
-
-  const titleRow = css({
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.sizing.scale400,
-  });
-
-  const dl = css({
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    fontSize: theme.typography.font200.fontSize,
-    margin: 0,
-  });
-
-  const toolRow = css({ display: "flex", gap: theme.sizing.scale300 });
-
-  const callout = css({
-    borderRadius: theme.borders.radius300,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: theme.colors.borderOpaque,
-    padding: theme.sizing.scale500,
-    display: "flex",
-    flexDirection: "column",
-    gap: theme.sizing.scale300,
-  });
-
-  const video = css({
-    width: "100%",
-    borderRadius: theme.borders.radius300,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: theme.colors.borderOpaque,
-  });
-
+function SectionLabel({ children }: { children: string }) {
   return (
-    <div className={css({ display: "flex", flexDirection: "column", gap: theme.sizing.scale800 })}>
-      <header>
-        <HeadingLarge marginTop={0} marginBottom={theme.sizing.scale300}>
-          Built-in Tools
-        </HeadingLarge>
-        <ParagraphSmall marginTop={0} marginBottom={0} className={css({ color: theme.colors.contentSecondary })}>
-          {totalTools} LLM-callable tools across {TOOL_GROUPS.length} categories. Every tool can be evolved at runtime
-          through the tool evolution system.
-        </ParagraphSmall>
+    <p className="mb-4 font-mono text-xs font-bold uppercase tracking-widest text-dim">
+      // {children}
+    </p>
+  );
+}
+
+export default function Tools() {
+  return (
+    <div className="mx-auto max-w-[1140px] px-4 py-8">
+      <header className="mb-10">
+        <SectionLabel>Tool System</SectionLabel>
+        <h1 className="font-display text-5xl tracking-wide md:text-[4rem]">
+          EVERYTHING IS A TOOL
+        </h1>
+        <p className="mt-3 max-w-2xl text-sm text-dim">
+          {totalTools} LLM-callable tools across {TOOL_GROUPS.length} categories.
+          Every tool can be evolved at runtime through the tool evolution system.
+        </p>
       </header>
 
-      <div className={grid}>
+      <div className="grid gap-4 md:grid-cols-2">
         {TOOL_GROUPS.map((group) => (
-          <Card
+          <div
             key={group.category}
-            overrides={{}}
-            title={
-              <div className={titleRow}>
-                <span>{group.category}</span>
-                <span className={css({ fontSize: theme.typography.font100.fontSize, fontWeight: 400, color: theme.colors.contentSecondary })}>
-                  {group.tools.length} tool{group.tools.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-            }
+            className="flex flex-col gap-3 border border-border bg-bg3 p-6"
           >
-            <ParagraphSmall marginTop={0} marginBottom={theme.sizing.scale400} className={css({ color: theme.colors.contentSecondary })}>
-              {group.description}
-            </ParagraphSmall>
-            <dl className={dl}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-display text-2xl tracking-wide text-foreground">
+                {group.category}
+              </h2>
+              <span className="font-mono text-xs text-dim">
+                {group.tools.length} tool{group.tools.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <p className="text-xs text-dim">{group.description}</p>
+            <dl className="flex flex-col gap-1.5">
               {group.tools.map((t) => (
-                <div key={t.name} className={toolRow}>
-                  <dt style={{ margin: 0 }}>
+                <div key={t.name} className="flex gap-3">
+                  <dt className="shrink-0">
                     <InlineCode>{t.name}</InlineCode>
                   </dt>
-                  <dd className={css({ margin: 0, color: theme.colors.contentSecondary })}>{t.desc}</dd>
+                  <dd className="m-0 text-xs text-dim">{t.desc}</dd>
                 </div>
               ))}
             </dl>
-          </Card>
+          </div>
         ))}
       </div>
 
-      <section className={css({ maxWidth: "42rem", display: "flex", flexDirection: "column", gap: theme.sizing.scale400 })}>
-        <HeadingMedium marginTop={0} marginBottom={0}>
-          Evolvable Tool System
-        </HeadingMedium>
-        <video muted loop autoPlay playsInline className={video}>
+      <section className="mt-10 max-w-2xl space-y-4">
+        <h2 className="font-display text-4xl tracking-wide text-foreground md:text-[3rem]">
+          EVOLVABLE TOOL SYSTEM
+        </h2>
+
+        <video
+          muted
+          loop
+          autoPlay
+          playsInline
+          className="w-full border border-border rounded-md"
+        >
           <source src="/demos/tool-evolution.mp4" type="video/mp4" />
         </video>
-        <ParagraphSmall marginTop={0} marginBottom={0} className={css({ color: theme.colors.contentSecondary })}>
-          Tools are not static definitions. Through the <InlineCode>evolve_tool</InlineCode> command (or the{" "}
-          <InlineCode>/evolve-tool</InlineCode> slash command), the agent can mutate any tool&apos;s description or
-          parameters. Mutations are gated by novelty scoring — only variants that differ significantly from existing ones
-          are activated. Variants are persisted to{" "}
-          <InlineCode>.chrysalis/state/tool-evolution.json</InlineCode> and can be selected, archived, or further evolved
-          at runtime without restart.
-        </ParagraphSmall>
-        <div className={css({ display: "flex", flexDirection: "column", gap: theme.sizing.scale400 })}>
-          <div className={callout}>
+
+        <p className="text-sm leading-relaxed text-dim">
+          Tools are not static definitions. Through the{" "}
+          <InlineCode>evolve_tool</InlineCode> command (or the{" "}
+          <InlineCode>/evolve-tool</InlineCode> slash command), the agent can
+          mutate any tool&apos;s description or parameters. Mutations are gated
+          by novelty scoring — only variants that differ significantly from
+          existing ones are activated. Variants are persisted to{" "}
+          <InlineCode>.chrysalis/state/tool-evolution.json</InlineCode> and can
+          be selected, archived, or further evolved at runtime without restart.
+        </p>
+
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2 border border-border bg-bg3 p-5">
             <InlineCode>evolve_tool</InlineCode>
-            <ParagraphSmall marginTop={0} marginBottom={0} className={css({ color: theme.colors.contentSecondary })}>
-              Given a tool name and feedback, mutates the tool description and/or parameters via LLM (heuristic fallback
-              when no provider). Gates by novelty threshold (default 0.25).
-            </ParagraphSmall>
+            <p className="text-xs leading-relaxed text-dim">
+              Given a tool name and feedback, mutates the tool description
+              and/or parameters via LLM (heuristic fallback when no provider).
+              Gates by novelty threshold (default 0.25).
+            </p>
           </div>
-          <div className={callout}>
+          <div className="flex flex-col gap-2 border border-border bg-bg3 p-5">
             <InlineCode>select_tool_variant</InlineCode>
-            <ParagraphSmall marginTop={0} marginBottom={0} className={css({ color: theme.colors.contentSecondary })}>
-              Switches the active variant for a tool. Only one variant is active at a time. The highest-scoring active
-              variant is used when the agent calls the tool.
-            </ParagraphSmall>
+            <p className="text-xs leading-relaxed text-dim">
+              Switches the active variant for a tool. Only one variant is active
+              at a time. The highest-scoring active variant is used when the
+              agent calls the tool.
+            </p>
           </div>
-          <div className={callout}>
+          <div className="flex flex-col gap-2 border border-border bg-bg3 p-5">
             <InlineCode>enable_tool / disable_tool</InlineCode>
-            <ParagraphSmall marginTop={0} marginBottom={0} className={css({ color: theme.colors.contentSecondary })}>
-              Toggle tool availability at runtime. Disabled tools cannot be called by the agent. Events are emitted so the
-              UI can reflect the change.
-            </ParagraphSmall>
+            <p className="text-xs leading-relaxed text-dim">
+              Toggle tool availability at runtime. Disabled tools cannot be
+              called by the agent. Events are emitted so the UI can reflect the
+              change.
+            </p>
           </div>
         </div>
       </section>

@@ -2,13 +2,7 @@ import { ai, ax } from "@ax-llm/ax";
 import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-
-interface ProviderConfig {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseURL?: string;
-}
+import { type ProviderConfig } from "../types.js";
 
 function resolveProviderConfig(preferredProvider?: string): ProviderConfig | null {
   const configs: Record<string, ProviderConfig | null> = {
@@ -48,7 +42,7 @@ export const TEST_TOOL_DEFINITIONS = [
         file_path: { type: "string", description: "Path to the source file to generate tests for" },
         framework: { type: "string", description: "Test framework (jest/vitest/mocha/python/unittest/golang) - auto-detected if not specified" },
         test_dir: { type: "string", description: "Directory to write tests to (defaults to adjacent __tests__ or test folder)" },
-       覆盖率_target: { type: "number", description: "Target line coverage percentage (0-100, default 80)" },
+        coverage_target: { type: "number", description: "Target line coverage percentage (0-100, default 80)" },
         provider: { type: "string", description: "LLM provider override (openai/anthropic/google-gemini)" },
         test_type: { type: "string", description: "Type of tests (unit/integration/e2e, default unit)" }
       },

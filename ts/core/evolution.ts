@@ -29,7 +29,8 @@ import {
   type HarnessStrategy,
   type Phenotype,
   type TaskPlan,
-  type ProfileStatsEntry
+  type ProfileStatsEntry,
+  type ProviderConfig
 } from "./types.js";
 import { dedupe, slugify } from "./util.js";
 
@@ -75,12 +76,6 @@ interface EvolutionArchiveState {
   entries: ArchiveEntry[];
 }
 
-interface ProviderConfig {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseURL?: string;
-}
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

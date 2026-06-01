@@ -123,6 +123,13 @@ export interface AutonomousEvolutionReport {
   results: Array<{ target: string; status: "applied" | "skipped"; detail: string }>;
 }
 
+export interface ProviderConfig {
+  provider: string;
+  apiKey: string;
+  model?: string;
+  baseURL?: string;
+}
+
 export interface ChrysalisConfig {
   pi: {
     runtimePreference: PiRuntimePreference;
@@ -137,6 +144,8 @@ export interface ChrysalisConfig {
   artifacts: {
     root: string;
   };
+  /** Optional `@chrysalis/*` tool packages to load on top of the core. */
+  extensions: string[];
 }
 
 export interface TaskPlan {
@@ -237,20 +246,6 @@ export interface TraceRecord {
   toolResults: unknown[];
 }
 
-export interface CacheEntry {
-  value: string;
-  createdAt: number;
-  ttl: number;
-  tags: string[];
-}
-
-export interface CacheStats {
-  total: number;
-  valid: number;
-  expired: number;
-  tags: Record<string, number>;
-}
-
 export interface DecompStep {
   id: string;
   description: string;
@@ -277,11 +272,6 @@ export interface DecompositionArchive {
   archive: Record<string, { score: number; pattern: DecompositionPattern }>;
   pointCloud: Array<{ phenotype: DecompPhenotype; pattern: DecompositionPattern }>;
   defaultId: string | null;
-}
-
-export interface VectorEntry {
-  text: string;
-  vec: number[];
 }
 
 export interface SubtaskDefinition {

@@ -1,0 +1,26 @@
+{
+  "name": "@chrysalis/web",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "Web fetch and search tools for Chrysalis Forge",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./ts/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist/", "ts/"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "chrysalis-forge": "^0.4.0"
+  },
+  "dependencies": {
+    "@chrysalis/cache": "^0.4.0"
+  },
+  "keywords": ["chrysalis", "web", "fetch", "search"]
+}

@@ -1,7 +1,7 @@
 import { ai, ax } from "@ax-llm/ax";
 import { type SubtaskDefinition, type ToolProfile, type ChrysalisTaskType } from "./types.js";
 import { loadArchive, recordPattern, saveArchive } from "./stores/decomp-archive.js";
-import { type DecompPhenotype } from "./types.js";
+import { type ProviderConfig } from "./types.js";
 import { slugify } from "./util.js";
 
 const TASK_TYPE_KEYWORDS: Record<string, string[]> = {
@@ -29,12 +29,6 @@ export function suggestProfileForSubtask(description: string): ToolProfile {
   return "all";
 }
 
-interface ProviderConfig {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseURL?: string;
-}
 
 function resolveProviderConfig(preferredProvider?: string): ProviderConfig | null {
   const configs: Record<string, ProviderConfig | null> = {

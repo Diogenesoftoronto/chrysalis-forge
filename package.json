@@ -2,7 +2,7 @@
   "name": "chrysalis-forge",
   "version": "0.4.0",
   "type": "module",
-  "description": "Self-evolving terminal coding agent with Ax planning, MAP-Elites evolution, RDF knowledge graph, dynamic stores, and multi-voter consensus.",
+  "description": "Self-evolving terminal coding agent with Ax planning, MAP-Elites evolution, dynamic stores, and multi-voter consensus. Optional packages for web, RDF, concurrent, and VCS tools.",
   "keywords": [
     "pi-package",
     "coding-agent",
@@ -11,7 +11,6 @@
     "dspy",
     "bun",
     "self-evolving",
-    "rdf",
     "map-elites",
     "decomposition"
   ],
@@ -34,9 +33,15 @@
     "dist/ts/runtime/pi.*",
     "dist/ts/runtime/bundled-assets.generated.*",
     "pi/",
+    "packages/*/dist/",
+    "packages/*/ts/",
+    "packages/*/package.json",
     "SYSTEM.md",
     "chrysalis.config.json",
     "tsconfig.json"
+  ],
+  "workspaces": [
+    "packages/*"
   ],
   "engines": {
     "node": ">=20.19.0"
@@ -57,7 +62,8 @@
     ]
   },
   "scripts": {
-    "build": "bun x tsc -p tsconfig.json",
+    "build": "bun x tsc -p tsconfig.json && bun run build:packages",
+    "build:packages": "for p in packages/*/; do bun x tsc -p \"$p\"; done",
     "build:bundle-assets": "node scripts/generate-bundled-assets.mjs",
     "build:binary": "bun x tsc -p tsconfig.json && bun run build:bundle-assets && bun x tsc -p tsconfig.json && bun build --compile ./dist/ts/cli/main.js --outfile dist/chrysalis",
     "dev": "bun --watch ts/cli/main.ts",

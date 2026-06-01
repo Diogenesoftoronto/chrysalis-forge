@@ -1,11 +1,5 @@
 import { ai, ax } from "@ax-llm/ax";
-
-interface ProviderConfig {
-  provider: string;
-  apiKey: string;
-  model?: string;
-  baseURL?: string;
-}
+import { type ProviderConfig } from "../types.js";
 
 function resolveProviderConfig(preferredProvider?: string): ProviderConfig | null {
   const configs: Record<string, ProviderConfig | null> = {

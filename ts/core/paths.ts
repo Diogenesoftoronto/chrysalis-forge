@@ -53,14 +53,6 @@ export function evolutionMetaPromptPath(cwd: string, rootName = ".chrysalis"): s
   return join(evolutionDir(cwd, rootName), "meta-prompt.md");
 }
 
-export function rdfDir(cwd: string, rootName = ".chrysalis"): string {
-  return join(stateDir(cwd, rootName), "rdf");
-}
-
-export function rdfDbPath(cwd: string, rootName = ".chrysalis"): string {
-  return join(rdfDir(cwd, rootName), "graph.db");
-}
-
 export function threadStorePath(cwd: string, rootName = ".chrysalis"): string {
   return join(stateDir(cwd, rootName), "threads.json");
 }
@@ -77,10 +69,6 @@ export function traceStorePath(cwd: string, rootName = ".chrysalis"): string {
   return join(stateDir(cwd, rootName), "traces.jsonl");
 }
 
-export function cacheStorePath(cwd: string, rootName = ".chrysalis"): string {
-  return join(stateDir(cwd, rootName), "web-cache.json");
-}
-
 export function evalStorePath(cwd: string, rootName = ".chrysalis"): string {
   return join(stateDir(cwd, rootName), "evals.jsonl");
 }
@@ -91,10 +79,6 @@ export function evalProfileStatsPath(cwd: string, rootName = ".chrysalis"): stri
 
 export function decompArchiveDir(cwd: string, rootName = ".chrysalis"): string {
   return join(stateDir(cwd, rootName), "decomp-archives");
-}
-
-export function vectorStorePath(cwd: string, rootName = ".chrysalis"): string {
-  return join(stateDir(cwd, rootName), "vectors.json");
 }
 
 export function sessionStatsPath(cwd: string, rootName = ".chrysalis"): string {
@@ -117,7 +101,6 @@ export async function ensureChrysalisDirs(cwd: string, rootName = ".chrysalis"):
     sessionsDir(cwd, rootName),
     stateDir(cwd, rootName),
     evolutionDir(cwd, rootName),
-    rdfDir(cwd, rootName),
     rollbackDir(cwd, rootName),
     decompArchiveDir(cwd, rootName),
     dynamicStoresDir(cwd, rootName)

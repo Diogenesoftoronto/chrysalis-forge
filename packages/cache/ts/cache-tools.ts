@@ -1,4 +1,4 @@
-import { cacheGet, cacheSet, cacheInvalidate, cacheInvalidateByTag, cacheCleanup, cacheStats } from "../stores/cache-store.js";
+import { cacheGet, cacheSet, cacheInvalidate, cacheInvalidateByTag, cacheCleanup, cacheStats } from "./cache-store.js";
 
 export const CACHE_TOOL_DEFINITIONS = [
   {

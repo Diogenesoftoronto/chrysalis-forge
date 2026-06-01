@@ -19,5 +19,12 @@
   },
   "artifacts": {
     "root": ".chrysalis"
-  }
+  },
+  "extensions": [
+    "@chrysalis/vcs-jj",
+    "@chrysalis/web",
+    "@chrysalis/cache",
+    "@chrysalis/rdf",
+    "@chrysalis/concurrent"
+  ]
 }

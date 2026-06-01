@@ -17,7 +17,14 @@ export const DEFAULT_CONFIG: ChrysalisConfig = {
   },
   artifacts: {
     root: ".chrysalis"
-  }
+  },
+  extensions: [
+    "@chrysalis/vcs-jj",
+    "@chrysalis/web",
+    "@chrysalis/cache",
+    "@chrysalis/rdf",
+    "@chrysalis/concurrent"
+  ]
 };
 
 export function configPath(cwd: string): string {
@@ -58,6 +65,11 @@ function sanitizeTools(value: unknown): string[] {
   return tools.length > 0 ? tools : [...DEFAULT_CONFIG.pi.tools];
 }
 
+function sanitizeExtensions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...DEFAULT_CONFIG.extensions];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
 export async function loadConfig(cwd: string): Promise<ChrysalisConfig> {
   try {
     const raw = JSON.parse(await readFile(configPath(cwd), "utf8")) as Partial<ChrysalisConfig>;
@@ -74,7 +86,8 @@ export async function loadConfig(cwd: string): Promise<ChrysalisConfig> {
       },
       artifacts: {
         root: sanitizeString(raw.artifacts?.root) ?? DEFAULT_CONFIG.artifacts.root
-      }
+      },
+      extensions: sanitizeExtensions(raw.extensions)
     };
   } catch {
     return DEFAULT_CONFIG;
