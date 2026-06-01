@@ -1,0 +1,57 @@
+{
+  "cli_version": "0.6.3",
+  "checkpoint_id": "ff04a8f082ed",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "README.md",
+    "package.json",
+    "site/src/components/AppProviders.tsx",
+    "site/src/components/MarkdownBody.tsx",
+    "site/src/components/NativeSelect.tsx",
+    "site/src/lib/chrysalis-theme.ts",
+    "site/src/pages/Chat.tsx",
+    "site/src/pages/Landing.tsx",
+    "site/src/pages/Prompts.tsx",
+    "site/src/pages/Settings.tsx",
+    "site/src/pages/Skills.tsx",
+    "site/src/pages/Tools.tsx",
+    "site/src/routeTree.gen.ts",
+    "site/src/routes/__root.tsx",
+    "site/src/styles.css",
+    "site/tailwind.config.js",
+    "test/stores/cache-store.test.ts",
+    "test/stores/rdf-store.test.ts",
+    "ts/cli/main.ts",
+    "ts/core/paths.ts",
+    "ts/core/stores/cache-store.ts",
+    "ts/core/stores/index.ts",
+    "ts/core/stores/rdf-store.ts",
+    "ts/core/stores/vector-store.ts",
+    "ts/core/tools/cache-tools.ts",
+    "ts/core/tools/index.ts",
+    "ts/core/tools/jj-tools.ts",
+    "ts/core/tools/rdf-tools.ts",
+    "ts/core/tools/sub-agent-tools.ts",
+    "ts/core/tools/test-tools.ts",
+    "ts/core/tools/web-tools.ts",
+    "ts/core/types.ts",
+    "ts/pi/chrysalis-extension.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ff/04a8f082ed/0/metadata.json",
+      "transcript": "/ff/04a8f082ed/0/full.jsonl",
+      "content_hash": "/ff/04a8f082ed/0/content_hash.txt",
+      "prompt": "/ff/04a8f082ed/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14437,
+    "cache_creation_tokens": 684480,
+    "cache_read_tokens": 7364220,
+    "output_tokens": 57324,
+    "api_call_count": 76
+  }
+}
