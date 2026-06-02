@@ -1,0 +1,33 @@
+any thing you would like to add?
+
+---
+
+fix this
+
+---
+
+just resolve all the issues
+
+---
+
+just resolve all the issues, for the questsion i t hink we can wire up the cache to web. yes it does couple but that is reasonable. make sure the commnds are only loaded with the relevant extension.. and locals that are unused either remove  them or wire them up to be used, unused locals here could exist because they might exist as a phantom for something that should genuinely exist but is missing figure out which one it is. the default five  on is fine
+
+---
+
+update the sites copy for all these changes if you haven't already and add this to the blog post and prepare a new release. commit and push
+
+---
+
+.
+
+---
+
+what would be need for a 1.0 release?
+
+---
+
+get the low hanging fruit done like cic
+
+---
+
+update to the latest version of githubci.
