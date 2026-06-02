@@ -1,4 +1,4 @@
-import { classifyTask, suggestProfileForSubtask, runDecomposition, shouldVote } from "../decomp-planner.js";
+import { classifyTask, runDecomposition } from "../decomp-planner.js";
 import { tallyVotes, STAKES_PRESETS, selectStakes } from "../decomp-voter.js";
 
 export const DECOMP_TOOL_DEFINITIONS = [

@@ -1,6 +1,6 @@
 {
   "name": "@chrysalis/concurrent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Parallel sub-agent tools for Chrysalis Forge",
   "main": "./dist/index.js",
@@ -15,9 +15,6 @@
   "files": ["dist/", "ts/"],
   "scripts": {
     "build": "tsc -p tsconfig.json"
-  },
-  "peerDependencies": {
-    "chrysalis-forge": "^0.4.0"
   },
   "keywords": ["chrysalis", "sub-agent", "concurrent", "parallel"]
 }

@@ -1,4 +1,4 @@
-import { evolveSystemPrompt, evolveMetaPrompt, evolveHarnessStrategy, loadEvolutionArchive, loadEvolutionState, summarizeEvolutionState, suggestProfileFromStats } from "../evolution.js";
+import { evolveSystemPrompt, evolveMetaPrompt, evolveHarnessStrategy, loadEvolutionArchive, loadEvolutionState, summarizeEvolutionState } from "../evolution.js";
 import { logEval, getProfileStats, suggestProfile } from "../stores/eval-store.js";
 import { loadProfileState } from "../project.js";
 

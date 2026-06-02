@@ -1,4 +1,4 @@
-import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump, storeDescribe } from "../stores/store-registry.js";
+import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump } from "../stores/store-registry.js";
 
 export const STORE_TOOL_DEFINITIONS = [
   {

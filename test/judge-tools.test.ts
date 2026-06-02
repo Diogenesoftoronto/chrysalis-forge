@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 import { JUDGE_TOOL_DEFINITIONS, executeJudgeTool, judgeWithLLM } from "../ts/core/tools/judge-tools.js";
 

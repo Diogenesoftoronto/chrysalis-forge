@@ -1,5 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { appendFile } from "node:fs/promises";
 
 import { ensureChrysalisDirs, traceStorePath } from "../paths.js";
 import { type TraceRecord } from "../types.js";

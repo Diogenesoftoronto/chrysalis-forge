@@ -11,8 +11,7 @@ import {
   storeSet,
   storeRemove,
   storeDump,
-  storeDescribe,
-  storeGetSpec
+  storeDescribe
 } from "../../ts/core/stores/store-registry.js";
 
 describe("store-registry", () => {

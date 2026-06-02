@@ -133,6 +133,29 @@ Install separately to extend the tool surface:
 
 **Note**: `@chrysalis/web` depends on `@chrysalis/cache`. The `rdf` package includes vector similarity search (`vectorAdd`, `vectorSearch`).
 
+#### Enabling extensions
+
+Packages load only when listed under `extensions` in `chrysalis.config.json`.
+Each one registers its tools **and** slash commands together, so a disabled
+extension contributes neither:
+
+```json
+{
+  "extensions": [
+    "@chrysalis/vcs-jj",
+    "@chrysalis/web",
+    "@chrysalis/cache",
+    "@chrysalis/rdf",
+    "@chrysalis/concurrent"
+  ]
+}
+```
+
+All five are enabled by default. Set `"extensions": []` for a core-only install.
+The loader resolves each entry from the bundled `packages/` workspace first, then
+as a separately installed npm package — a missing or broken extension never breaks
+the core agent.
+
 ## Installation
 
 ### One-line install (recommended)

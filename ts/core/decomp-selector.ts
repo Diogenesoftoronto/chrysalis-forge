@@ -5,7 +5,7 @@ import {
   type ChrysalisProfile
 } from "./types.js";
 import { phenotypeDistance, normalizePhenotype } from "./evolution.js";
-import { loadArchive, saveArchive } from "./stores/decomp-archive.js";
+import { loadArchive } from "./stores/decomp-archive.js";
 
 const PRIORITY_PHENOTYPE: Record<ChrysalisProfile, DecompPhenotype> = {
   fast: { depth: 1, parallelism: 3, toolDiversity: 1, complexity: 2 },
@@ -46,7 +46,6 @@ export function selectPatternForPhenotype(
   const mins = [Math.min(...allDepth), Math.min(...allParallel), Math.min(...allTool), Math.min(...allComplex)];
   const maxs = [Math.max(...allDepth), Math.max(...allParallel), Math.max(...allTool), Math.max(...allComplex)];
 
-  const targetArr = [target.depth, target.parallelism, target.toolDiversity, target.complexity];
   const targetNorm = normalizePhenotype(
     { accuracy: target.depth, latency: target.parallelism, cost: target.toolDiversity, usage: target.complexity },
     mins, maxs

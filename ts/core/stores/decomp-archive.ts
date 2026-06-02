@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { ensureChrysalisDirs, decompArchiveDir } from "../paths.js";
 import {
-  type DecompStep,
   type DecompositionPattern,
   type DecompPhenotype,
   type DecompositionArchive

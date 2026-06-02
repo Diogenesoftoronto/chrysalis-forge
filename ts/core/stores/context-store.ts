@@ -1,9 +1,8 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 import { ensureChrysalisDirs, contextStorePath } from "../paths.js";
-import { type SessionContext, type SessionDB, type SessionMetadata, type ChrysalisProfile } from "../types.js";
+import { type SessionContext, type SessionDB, type SessionMetadata } from "../types.js";
 
 const DEFAULT_SYSTEM_PROMPT = "You are Chrysalis, a terminal-first coding agent.";
 

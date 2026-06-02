@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 
 import { EVOLVER_TOOL_DEFINITIONS, executeEvolverTool } from "../ts/core/tools/evolver-tools.js";
 import { globalToolRegistry } from "../ts/core/tools/tool-registry.js";
-import { saveToolEvolutionState, defaultToolEvolutionState, type ToolEvolutionState, type ToolVariant } from "../ts/core/tools/tool-evolution.js";
+import { saveToolEvolutionState, type ToolEvolutionState } from "../ts/core/tools/tool-evolution.js";
 
 describe("evolver-tools", () => {
   test("EVOLVER_TOOL_DEFINITIONS has expected tools", () => {

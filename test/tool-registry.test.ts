@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 import { globalToolRegistry } from "../ts/core/tools/tool-registry.js";
 

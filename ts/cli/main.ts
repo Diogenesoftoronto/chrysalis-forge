@@ -17,15 +17,11 @@ import { configPath, loadConfig } from "../core/config.js";
 import { evolutionMetaPromptPath, evolutionSystemPromptPath } from "../core/paths.js";
 import { interpretProfilePhrase } from "../core/priority.js";
 import { loadSessionStats, getSessionStatsDisplay, formatTokens, formatCost } from "../core/stores/session-stats.js";
-import { sessionList, sessionListWithMetadata, sessionCreate, sessionSwitch, sessionDelete, sessionGetActive } from "../core/stores/context-store.js";
-import { threadList, threadCreate, threadSwitch, threadFind, threadContinue, threadSpawnChild, threadGetActive, threadGetRelations } from "../core/stores/thread-store.js";
-import { fileBackup, fileRollback, fileRollbackList, rollbackHistorySize } from "../core/stores/rollback-store.js";
-import { getProfileStats, getToolStats, suggestProfile as suggestEvalProfile } from "../core/stores/eval-store.js";
-import { listArchives, archiveStats } from "../core/stores/decomp-archive.js";
-import { classifyTask, decomposeTaskLLM, heuristicDecomposition, runDecomposition, shouldVote } from "../core/decomp-planner.js";
-import { selectPatternForPriority, selectOrDecompose } from "../core/decomp-selector.js";
-import { STAKES_PRESETS, selectStakes } from "../core/decomp-voter.js";
-import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump, storeDescribe } from "../core/stores/store-registry.js";
+import { sessionList, sessionSwitch } from "../core/stores/context-store.js";
+import { threadList, threadSwitch } from "../core/stores/thread-store.js";
+import { fileRollback } from "../core/stores/rollback-store.js";
+import { classifyTask, runDecomposition } from "../core/decomp-planner.js";
+import { storeCreate, storeDelete, storeList, storeGet, storeSet, storeRemove, storeDump } from "../core/stores/store-registry.js";
 
 function usage(): void {
   console.log(`chrysalis commands:

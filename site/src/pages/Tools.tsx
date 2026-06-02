@@ -3,6 +3,8 @@ import { InlineCode } from "../components/MarkdownBody";
 interface ToolGroup {
   category: string;
   description: string;
+  /** Optional `@chrysalis/*` package this group ships in, loaded via config `extensions`. */
+  extension?: string;
   tools: Array<{ name: string; desc: string }>;
 }
 
@@ -85,6 +87,7 @@ const TOOL_GROUPS: ToolGroup[] = [
   {
     category: "Jujutsu",
     description: "Jujutsu version control operations",
+    extension: "@chrysalis/vcs-jj",
     tools: [
       { name: "jj_status", desc: "Working copy status" },
       { name: "jj_log", desc: "Revision history" },
@@ -101,6 +104,7 @@ const TOOL_GROUPS: ToolGroup[] = [
   {
     category: "Web",
     description: "Web search and fetch",
+    extension: "@chrysalis/web",
     tools: [
       { name: "web_fetch", desc: "Fetch a URL" },
       { name: "web_search", desc: "Search the web" },
@@ -108,6 +112,7 @@ const TOOL_GROUPS: ToolGroup[] = [
   },
   {
     category: "Sub-Agents",
+    extension: "@chrysalis/concurrent",
     description: "Spawn and manage concurrent sub-agent tasks",
     tools: [
       { name: "spawn_task", desc: "Spawn a sub-agent task" },
@@ -130,6 +135,7 @@ const TOOL_GROUPS: ToolGroup[] = [
   },
   {
     category: "RDF Knowledge Graph",
+    extension: "@chrysalis/rdf",
     description: "Load, query, and insert RDF triples",
     tools: [
       { name: "rdf_load", desc: "Load N-triples into a named graph" },
@@ -139,6 +145,7 @@ const TOOL_GROUPS: ToolGroup[] = [
   },
   {
     category: "Cache",
+    extension: "@chrysalis/cache",
     description: "HTTP response caching with tag-based invalidation",
     tools: [
       { name: "cache_get", desc: "Get cached response" },
@@ -160,6 +167,9 @@ const TOOL_GROUPS: ToolGroup[] = [
 ];
 
 const totalTools = TOOL_GROUPS.reduce((n, g) => n + g.tools.length, 0);
+const optionalGroups = TOOL_GROUPS.filter((g) => g.extension);
+const optionalTools = optionalGroups.reduce((n, g) => n + g.tools.length, 0);
+const coreTools = totalTools - optionalTools;
 
 function SectionLabel({ children }: { children: string }) {
   return (
@@ -178,8 +188,16 @@ export default function Tools() {
           EVERYTHING IS A TOOL
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-dim">
+          {coreTools} core tools plus {optionalTools} in {optionalGroups.length}{" "}
+          optional <InlineCode>@chrysalis/*</InlineCode> packages —{" "}
           {totalTools} LLM-callable tools across {TOOL_GROUPS.length} categories.
           Every tool can be evolved at runtime through the tool evolution system.
+        </p>
+        <p className="mt-3 max-w-2xl text-xs text-dim">
+          Optional packages load only when listed under{" "}
+          <InlineCode>extensions</InlineCode> in{" "}
+          <InlineCode>chrysalis.config.json</InlineCode>. Each ships its tools and
+          slash commands together, so a disabled extension contributes neither.
         </p>
       </header>
 
@@ -198,6 +216,11 @@ export default function Tools() {
               </span>
             </div>
             <p className="text-xs text-dim">{group.description}</p>
+            {group.extension ? (
+              <span className="w-fit border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dim">
+                optional · {group.extension}
+              </span>
+            ) : null}
             <dl className="flex flex-col gap-1.5">
               {group.tools.map((t) => (
                 <div key={t.name} className="flex gap-3">

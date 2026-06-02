@@ -1,8 +1,6 @@
 import { readFile, appendFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 
 import { ensureChrysalisDirs, evalStorePath, evalProfileStatsPath } from "../paths.js";
-import { type ChrysalisProfile } from "../types.js";
 
 export interface EvalRecord {
   ts: number;

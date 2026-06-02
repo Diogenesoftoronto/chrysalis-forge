@@ -42,7 +42,7 @@ export function useReveal(threshold = 0.15, once = true) {
  * that children read for staggered delays.
  */
 export function useStaggerReveal(
-  childCount: number,
+  _childCount: number,
   baseDelay = 80,
   threshold = 0.1,
 ) {

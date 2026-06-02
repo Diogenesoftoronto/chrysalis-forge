@@ -1,4 +1,4 @@
-import { fileRollback, fileRollbackList, rollbackHistorySize, clearRollbackHistory } from "../stores/rollback-store.js";
+import { fileRollback, fileRollbackList } from "../stores/rollback-store.js";
 
 export const ROLLBACK_TOOL_DEFINITIONS = [
   {

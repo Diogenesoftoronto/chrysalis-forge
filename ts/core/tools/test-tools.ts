@@ -1,7 +1,6 @@
 import { ai, ax } from "@ax-llm/ax";
 import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { type ProviderConfig } from "../types.js";
 
 function resolveProviderConfig(preferredProvider?: string): ProviderConfig | null {
@@ -116,8 +115,6 @@ function inferTestDir(filePath: string): string {
 }
 
 function heuristicTestGen(code: string, framework: string): Array<{ name: string; body: string }> {
-  const tests: Array<{ name: string; body: string }> = [];
-  
   const fnMatch = code.match(/(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/g);
   const fnName = fnMatch?.[0]?.match(/(?:function\s+(\w+)|(\w+)\s*=)/)?.[1] ?? "subject";
   

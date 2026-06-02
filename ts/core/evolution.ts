@@ -28,7 +28,6 @@ import {
   type EvolutionState,
   type HarnessStrategy,
   type Phenotype,
-  type TaskPlan,
   type ProfileStatsEntry,
   type ProviderConfig
 } from "./types.js";
@@ -328,11 +327,6 @@ export function selectEliteEntry(entries: ArchiveEntry[], target: Phenotype): Ar
     }))
     .sort((left, right) => left.distance - right.distance || right.entry.score - left.entry.score);
   return scored[0]?.entry ?? null;
-}
-
-function mean(values: number[]): number {
-  if (values.length === 0) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function median(values: number[]): number {
@@ -807,20 +801,7 @@ export async function recordEvolutionEvaluation(cwd: string, record: EvaluationR
 
   const state = await loadEvolutionState(cwd);
   if (record.model) {
-    state.bandit = {
-      arms: {
-        ...state.bandit.arms,
-        [record.model]: record.success
-          ? {
-              alpha: (state.bandit.arms[record.model]?.alpha ?? 1) + 1,
-              beta: state.bandit.arms[record.model]?.beta ?? 1
-            }
-          : {
-              alpha: state.bandit.arms[record.model]?.alpha ?? 1,
-              beta: (state.bandit.arms[record.model]?.beta ?? 1) + 1
-            }
-      }
-    };
+    state.bandit = updateBandit(state.bandit, record.model, record.success);
     await saveEvolutionState(cwd, state);
   }
 }

@@ -20,6 +20,17 @@ export function register(pi: any): void {
   }
 }
 
+export const commands = [
+  {
+    name: "cache-stats",
+    description: "Show web cache statistics.",
+    handler: async (_args: string | string[], ctx: any): Promise<void> => {
+      const stats = await cacheStats(ctx.cwd);
+      ctx.ui.notify(`cache: total=${stats.total} valid=${stats.valid} expired=${stats.expired}`, "info");
+    }
+  }
+];
+
 export const toolGroup = { definitions: CACHE_TOOL_DEFINITIONS, execute: executeCacheTool };
 export { CACHE_TOOL_DEFINITIONS, executeCacheTool };
 export { cacheStats, cacheCleanup, cacheClear, cacheGet, cacheSet, cacheInvalidate, cacheInvalidateByTag };

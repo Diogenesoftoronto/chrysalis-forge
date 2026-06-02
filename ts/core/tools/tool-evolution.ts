@@ -1,7 +1,7 @@
 import { ai, ax } from "@ax-llm/ax";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ToolDefinition, type ToolExecutor } from "./tool-registry.js";
+import { type ToolDefinition } from "./tool-registry.js";
 import { slugify } from "../util.js";
 import { type ProviderConfig } from "../types.js";
 
@@ -57,11 +57,6 @@ export interface ToolEvolutionState {
   fieldHistory: Record<string, EvolvableToolField>;
   updatedAt: string;
 }
-
-const TOOL_EVOLUTION_PROMPT = `You are Chrysalis's tool evolution optimizer.
-Given a tool's current definition and feedback about how it should improve, generate an evolved version.
-Focus on making descriptions clearer, parameters more precise, and defaults more useful.
-Return only the JSON without commentary.`;
 
 export function ngramDistance(a: string, b: string, n = 3): number {
   if (!a || !b) return a === b ? 0 : 1;
@@ -230,6 +225,10 @@ export async function evolveTool(
     if (paramResult.model !== "heuristic") model = paramResult.model;
   }
 
+  // Score novelty against previously archived variants so near-duplicate
+  // evolutions fall below `threshold` and are rejected.
+  noveltyScore = Math.min(noveltyScore, toolNoveltyScore(existing, description));
+
   const rejected = noveltyScore < threshold;
 
   const variant: ToolVariant = {
@@ -292,7 +291,7 @@ export function archiveToolVariant(cwd: string, variantId: string): boolean {
 
 export function selectToolVariant(cwd: string, variantId: string): boolean {
   const state = loadToolEvolutionState(cwd);
-  for (const [name, variants] of Object.entries(state.variants)) {
+  for (const variants of Object.values(state.variants)) {
     const idx = variants.findIndex(v => v.id === variantId);
     if (idx >= 0) {
       for (let i = 0; i < variants.length; i++) {

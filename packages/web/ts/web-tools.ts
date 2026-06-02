@@ -1,56 +1,6 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { cacheGet, cacheSet } from "@chrysalis/cache";
 
 const DEFAULT_TTL = 86400;
-const MAX_CACHE_TTL = 604800;
-
-interface CacheEntry {
-  value: string;
-  createdAt: number;
-  ttl: number;
-  tags: string[];
-}
-
-function cacheStorePath(cwd: string, rootName = ".chrysalis"): string {
-  return join(resolve(cwd, rootName), "state", "web-cache.json");
-}
-
-async function ensureCacheDir(cwd: string, rootName = ".chrysalis"): Promise<void> {
-  await mkdir(join(resolve(cwd, rootName), "state"), { recursive: true });
-}
-
-async function loadCache(cwd: string): Promise<Record<string, CacheEntry>> {
-  await ensureCacheDir(cwd);
-  try {
-    return JSON.parse(await readFile(cacheStorePath(cwd), "utf8")) as Record<string, CacheEntry>;
-  } catch {
-    return {};
-  }
-}
-
-async function saveCache(cwd: string, cache: Record<string, CacheEntry>): Promise<void> {
-  await ensureCacheDir(cwd);
-  await writeFile(cacheStorePath(cwd), `${JSON.stringify(cache, null, 2)}\n`, "utf8");
-}
-
-async function cacheGet(cwd: string, key: string): Promise<string | null> {
-  const cache = await loadCache(cwd);
-  const entry = cache[key];
-  if (!entry) return null;
-  if (Date.now() / 1000 > entry.createdAt + entry.ttl) {
-    delete cache[key];
-    await saveCache(cwd, cache);
-    return null;
-  }
-  return entry.value;
-}
-
-async function cacheSetWithTags(cwd: string, key: string, value: string, ttl: number, tags: string[]): Promise<void> {
-  const cache = await loadCache(cwd);
-  cache[key] = { value, createdAt: Math.floor(Date.now() / 1000), ttl: Math.min(ttl, MAX_CACHE_TTL), tags };
-  await saveCache(cwd, cache);
-}
 
 export const WEB_TOOL_DEFINITIONS = [
   {
@@ -113,7 +63,7 @@ export async function executeWebTool(
         const result = JSON.stringify({ status: response.status, url: response.url, body: body.slice(0, 50000) }, null, 2);
 
         if (cacheTtl > 0) {
-          await cacheSetWithTags(cwd, `web:${url}`, result, Math.min(cacheTtl, 604800), ["web"]);
+          await cacheSet(cwd, `web:${url}`, result, cacheTtl, ["web"]);
         }
 
         return result;
@@ -158,7 +108,7 @@ export async function executeWebTool(
         }));
         const result = JSON.stringify(results, null, 2);
 
-        await cacheSetWithTags(cwd, `search:${query}`, result, DEFAULT_TTL, ["web", "search"]);
+        await cacheSet(cwd, `search:${query}`, result, DEFAULT_TTL, ["web", "search"]);
 
         return result;
       } catch (err: any) {

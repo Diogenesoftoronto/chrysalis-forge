@@ -7,7 +7,6 @@ import {
   loadSessionStats,
   addTurn,
   addTokens,
-  addCost,
   recordToolUse,
   recordFileOp,
   resetSessionStats,

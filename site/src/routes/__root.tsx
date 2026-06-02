@@ -15,6 +15,7 @@ const LINKS = [
   { to: "/chat", label: "Chat" },
   { to: "/prompts", label: "Prompts" },
   { to: "/skills", label: "Skills" },
+  { to: "/blog", label: "Blog" },
   { to: "/settings", label: "Settings" },
 ] as const;
 

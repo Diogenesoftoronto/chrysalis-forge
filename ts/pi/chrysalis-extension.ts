@@ -33,7 +33,7 @@ import { PRIORITY_TOOL_DEFINITIONS, executePriorityTool } from "../core/tools/pr
 import { EVOLVER_TOOL_DEFINITIONS, executeEvolverTool } from "../core/tools/evolver-tools.js";
 import { globalToolRegistry } from "../core/tools/tool-registry.js";
 
-const CHRYSALIS_VERSION = "0.4.0";
+const CHRYSALIS_VERSION = "0.5.0";
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
 const CHRYSALIS_ASCII_LOGO = [
@@ -248,30 +248,52 @@ async function importExtension(name: string): Promise<any | null> {
   }
 }
 
-async function loadOptionalToolGroups(cwd: string): Promise<ToolGroup[]> {
-  let extensions: string[] = [];
+interface PackageCommand {
+  name: string;
+  description: string;
+  handler: (args: string | string[], ctx: any) => void | Promise<void>;
+}
+
+interface LoadedExtension {
+  toolGroup?: ToolGroup;
+  commands?: PackageCommand[];
+}
+
+async function loadOptionalExtensions(cwd: string): Promise<LoadedExtension[]> {
+  let names: string[] = [];
   try {
-    extensions = (await loadConfig(cwd)).extensions;
+    names = (await loadConfig(cwd)).extensions;
   } catch {
     return [];
   }
-  const groups: ToolGroup[] = [];
-  for (const name of extensions) {
+  const loaded: LoadedExtension[] = [];
+  for (const name of names) {
     try {
       const mod = await importExtension(name);
-      if (mod?.toolGroup?.definitions && typeof mod.toolGroup.execute === "function") {
-        groups.push(mod.toolGroup as ToolGroup);
+      if (!mod) continue;
+      const ext: LoadedExtension = {};
+      if (mod.toolGroup?.definitions && typeof mod.toolGroup.execute === "function") {
+        ext.toolGroup = mod.toolGroup as ToolGroup;
       }
+      if (Array.isArray(mod.commands)) {
+        ext.commands = mod.commands as PackageCommand[];
+      }
+      if (ext.toolGroup || ext.commands) loaded.push(ext);
     } catch {
       // A missing/broken optional package must never break the core agent.
     }
   }
-  return groups;
+  return loaded;
 }
+
+// Optional packages enabled via `extensions` in chrysalis.config.json. Their
+// tools and slash commands load only when the extension is listed, so a
+// disabled extension contributes neither tools nor commands.
+const OPTIONAL_EXTENSIONS: LoadedExtension[] = await loadOptionalExtensions(process.cwd());
 
 const ALL_TOOL_GROUPS: ToolGroup[] = [
   ...CORE_TOOL_GROUPS,
-  ...(await loadOptionalToolGroups(process.cwd()))
+  ...OPTIONAL_EXTENSIONS.flatMap((ext) => (ext.toolGroup ? [ext.toolGroup] : []))
 ];
 
 function registerToolGroup(pi: any, group: typeof ALL_TOOL_GROUPS[number]): void {
@@ -431,6 +453,13 @@ export default function chrysalisExtension(pi: any): void {
   // Register all LLM-callable tools
   for (const group of ALL_TOOL_GROUPS) {
     registerToolGroup(pi, group);
+  }
+
+  // Slash commands contributed by enabled optional extensions.
+  for (const ext of OPTIONAL_EXTENSIONS) {
+    for (const cmd of ext.commands ?? []) {
+      pi.registerCommand(cmd.name, { description: cmd.description, handler: cmd.handler });
+    }
   }
 
   // Slash commands (human-initiated, same as before)

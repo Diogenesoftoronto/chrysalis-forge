@@ -1,6 +1,4 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 
 import { ensureChrysalisDirs, sessionStatsPath } from "../paths.js";
 import { type SessionStats } from "../types.js";

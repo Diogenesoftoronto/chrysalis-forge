@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ToolsRouteImport } from './routes/tools'
+import { Route as BlogRouteImport } from './routes/blog'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PromptsRouteImport } from './routes/prompts'
@@ -19,6 +20,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const ToolsRoute = ToolsRouteImport.update({
   id: '/tools',
   path: '/tools',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BlogRoute = BlogRouteImport.update({
+  id: '/blog',
+  path: '/blog',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SkillsRoute = SkillsRouteImport.update({
@@ -49,6 +55,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/blog': typeof BlogRoute
   '/chat': typeof ChatRoute
   '/prompts': typeof PromptsRoute
   '/settings': typeof SettingsRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/blog': typeof BlogRoute
   '/chat': typeof ChatRoute
   '/prompts': typeof PromptsRoute
   '/settings': typeof SettingsRoute
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/blog': typeof BlogRoute
   '/chat': typeof ChatRoute
   '/prompts': typeof PromptsRoute
   '/settings': typeof SettingsRoute
@@ -74,12 +83,20 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/chat' | '/prompts' | '/settings' | '/skills' | '/tools'
+  fullPaths:
+    | '/'
+    | '/blog'
+    | '/chat'
+    | '/prompts'
+    | '/settings'
+    | '/skills'
+    | '/tools'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/chat' | '/prompts' | '/settings' | '/skills' | '/tools'
+  to: '/' | '/blog' | '/chat' | '/prompts' | '/settings' | '/skills' | '/tools'
   id:
     | '__root__'
     | '/'
+    | '/blog'
     | '/chat'
     | '/prompts'
     | '/settings'
@@ -89,6 +106,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BlogRoute: typeof BlogRoute
   ChatRoute: typeof ChatRoute
   PromptsRoute: typeof PromptsRoute
   SettingsRoute: typeof SettingsRoute
@@ -103,6 +121,13 @@ declare module '@tanstack/react-router' {
       path: '/tools'
       fullPath: '/tools'
       preLoaderRoute: typeof ToolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/blog': {
+      id: '/blog'
+      path: '/blog'
+      fullPath: '/blog'
+      preLoaderRoute: typeof BlogRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/skills': {
@@ -145,6 +170,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BlogRoute: BlogRoute,
   ChatRoute: ChatRoute,
   PromptsRoute: PromptsRoute,
   SettingsRoute: SettingsRoute,
