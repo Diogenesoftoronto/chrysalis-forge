@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core (typecheck · build · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Typecheck (noUnusedLocals)
+        run: bun run typecheck
+
+      - name: Build optional packages
+        run: bun run build:packages
+
+      - name: Test
+        run: bun test ./test/*.test.ts ./test/stores/*.test.ts
+
+  site:
+    name: Site (typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install site dependencies
+        working-directory: site
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Typecheck site
+        working-directory: site
+        run: bun x tsc --noEmit
